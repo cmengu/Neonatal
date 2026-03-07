@@ -1,22 +1,20 @@
-# Neonatal Sepsis — Notebooks 01 & 02 Execution Plan
+# Neonatal Sepsis — Feature Engineering Foundation Plan
 
-**Overall Progress:** `100%` — Steps 3–8 complete (simulated data)
-
-> **Modification (PICS downloading):** Notebooks 01 & 02 use neurokit2 simulated ECG (500Hz, 60s) instead of wfdb file loading. Same pipeline. Steps 1–2 (file placement, path) skipped.
+**Overall Progress:** `0%` — 0/4 steps complete
 
 ---
 
 ## TLDR
 
-Build and validate the first two notebooks of the neonatal sepsis pipeline. Notebook 01 loads and inspects raw PICS ECG/respiration signals from PhysioNet, confirms data quality across all 10 infant recordings, and establishes the data structure. Notebook 02 applies bandpass filtering to remove NICU electrical noise, detects R-peaks using the Pan-Tompkins algorithm, computes RR intervals, removes ectopic beats, and saves cleaned data to `data/processed/`. After this plan executes, the pipeline has clean, validated RR intervals ready for HRV extraction in notebook 03.
+Steal `get_serie_describe()` from acampillos/sepsis-prediction and adapt it into `src/features/hrv.py` as the core feature encoding function for the neonatal pipeline. This function takes a window of RR intervals and returns a flat dictionary of statistical features (mean, std, min, max, quantiles) — the direct input to the XGBoost feature matrix in notebook 03. After this plan executes, `src/features/hrv.py` exists with one working, tested function ready to be called from notebook 03.
 
 ---
 
 ## Critical Decisions
 
-- **Decision 1:** Use neurokit2 `ecg_peaks` (Pan-Tompkins) for R-peak detection — gold standard for clinical ECG, validated on preterm infants in literature.
-- **Decision 2:** Save cleaned RR intervals to `data/processed/` as CSV — decouples cleaning from feature extraction, avoids re-running the full pipeline each session.
-- **Decision 3:** Filter ectopic beats at 20% deviation threshold — conservative enough to catch noise, permissive enough to preserve real HRV.
+- **Decision 1:** Place function in `src/features/hrv.py` not `util.py` — HRV feature encoding belongs in the features module, not a generic utility file.
+- **Decision 2:** Replace `icustay_id` with `record_name` — PICS uses infant record names, not ICU stay IDs.
+- **Decision 3:** Input is a 1D numpy array of RR intervals, not a full DataFrame — simpler interface, matches output of notebook 02.
 
 ---
 
@@ -34,133 +32,69 @@ Build and validate the first two notebooks of the neonatal sepsis pipeline. Note
 
 | Unknown | Required | Source | Blocking | Resolved |
 |---------|----------|--------|----------|----------|
-| Exact path where wget saved PICS files | Confirm `data/raw/` subfolder structure | `ls data/raw/` in terminal | Steps 1, 5 | ⬜ |
-| Channel index for ECG vs respiration | ECG = index 0, respiration = index 1 | PICS documentation on PhysioNet | Steps 5, 6 | ✅ (confirmed from PICS docs) |
-| Sampling rate | ECG = 500Hz, respiration = 50Hz | PICS documentation | Steps 5, 6, 7 | ✅ |
+| Does `src/features/hrv.py` already exist? | Confirm file exists or is empty | `ls src/features/` in terminal | Step 1 | ⬜ |
+| Does `src/features/__init__.py` exist? | Confirm package is importable | `ls src/features/` | Step 2 | ⬜ |
 
 ---
 
 ## Pre-Flight — Run Before Any Code Changes
 
 ```bash
-# 1. Confirm folder structure exists
-ls -la ~/Neonatal/
+# 1. Confirm src/features/ exists
+ls ~/Neonatal/src/features/
 
-# 2. Confirm notebooks folder exists
-ls ~/Neonatal/notebooks/
+# 2. Check if hrv.py already has content
+cat ~/Neonatal/src/features/hrv.py 2>/dev/null || echo "FILE DOES NOT EXIST"
 
-# 3. Confirm data landed in raw
-ls ~/Neonatal/data/raw/
+# 3. Confirm processed RR CSVs exist from notebook 02
+ls ~/Neonatal/data/processed/ | head -5
 
-# 4. Confirm virtual environment is active
-which python  # should point to neonatal venv
-
-# 5. Confirm all packages installed
-python -c "import wfdb, neurokit2, numpy, pandas, scipy, matplotlib; print('all imports OK')"
-
-# 6. Confirm .hea files are present (signals downloaded)
-find ~/Neonatal/data/raw/ -name "*.hea" | wc -l  # should return 10
+# 4. Confirm pandas is importable in venv
+python3 -c "import pandas as pd; print('pandas OK')"
 ```
 
 **Baseline Snapshot (agent fills during pre-flight):**
 ```
-.hea file count:        ____  (expected: 10)
-venv active:            ____  (expected: neonatal)
-all imports OK:         ____  (expected: no errors)
-data/processed exists:  ____  (expected: yes after mkdir)
+src/features/hrv.py exists:     ____  (yes/no)
+src/features/__init__.py exists: ____  (yes/no)
+data/processed/ CSV count:       ____  (expected: 10)
+pandas importable:               ____  (expected: OK)
 ```
 
 **Automated checks — all must pass before Step 1:**
-- [ ] `find data/raw/ -name "*.hea" | wc -l` returns 10
-- [ ] `python -c "import wfdb"` returns no error
-- [ ] `python -c "import neurokit2"` returns no error
-- [ ] `data/processed/` directory exists (create if not)
+- [ ] `ls src/features/` returns directory listing without error
+- [ ] `python3 -c "import pandas as pd"` returns no error
+- [ ] `ls data/processed/*.csv | wc -l` returns 10
 
 ---
 
 ## Tasks
 
-### Phase 1 — Data Ingestion & Exploration (Notebook 01)
+### Phase 1 — Create `src/features/hrv.py` with `get_serie_describe`
 
-**Goal:** All 10 PICS infant recordings loaded, plotted, and quality-checked. Output: printed table of duration, ECG std, and NaN count per infant.
+**Goal:** `src/features/hrv.py` exists, contains `get_serie_describe()`, and is importable from notebooks.
 
 ---
 
-- [ ] 🟥 **Step 1: Place notebook 01 in repo** — *Non-critical: file placement only*
+- [ ] 🟥 **Step 1: Create `src/features/__init__.py` if missing** — *Non-critical: package marker only*
 
-  **Idempotent:** Yes — copying a file twice produces the same result.
-
-  **Context:** `01_pics_exploration.ipynb` must live in `notebooks/` for relative paths (`../data/raw/`) to resolve correctly.
+  **Idempotent:** Yes — creating an empty file twice is safe.
 
   ```bash
-  cp ~/Downloads/01_pics_exploration.ipynb ~/Neonatal/notebooks/01_pics_exploration.ipynb
+  touch ~/Neonatal/src/__init__.py
+  touch ~/Neonatal/src/features/__init__.py
   ```
 
-  **What it does:** Places the notebook in the correct directory.
+  **What it does:** Makes `src` and `src/features` importable Python packages.
 
-  **Why this approach:** Relative paths in the notebook assume execution from `notebooks/`. Wrong placement breaks every data load cell.
+  **Why this approach:** Without `__init__.py`, `from src.features.hrv import get_serie_describe` fails with ModuleNotFoundError.
 
   **Git Checkpoint:**
   ```bash
   cd ~/Neonatal
-  git add notebooks/01_pics_exploration.ipynb
-  git commit -m "step 1: add 01_pics_exploration notebook"
+  git add src/__init__.py src/features/__init__.py
+  git commit -m "step 1: add __init__.py to make src.features importable"
   ```
-
-  **Subtasks:**
-  - [ ] 🟥 File exists at `notebooks/01_pics_exploration.ipynb`
-  - [ ] 🟥 Git commit made
-
-  **✓ Verification Test:**
-
-  **Type:** Unit
-
-  **Action:** `ls ~/Neonatal/notebooks/`
-
-  **Expected:** `01_pics_exploration.ipynb` appears in output
-
-  **Observe:** Terminal output
-
-  **Pass:** File name present in directory listing
-
-  **Fail:**
-  - If file missing → copy command failed → re-run cp command above
-
----
-
-- [ ] 🟥 **Step 2: Confirm data path resolves** — *Critical: all notebook cells depend on this path*
-
-  **Idempotent:** Yes — read-only path check.
-
-  **Context:** The notebook uses `../data/raw/physionet.org/files/picsdb/1.0.0/` as its data path. If wget saved files to a different subdirectory, every `wfdb.rdrecord` call will fail with FileNotFoundError.
-
-  **Pre-Read Gate:**
-  ```bash
-  # Run this and paste the output — confirms exact path wget used
-  find ~/Neonatal/data/raw/ -name "*.hea" | head -5
-  ```
-  If path differs from `physionet.org/files/picsdb/1.0.0/` → update `data_path` variable in notebook Cell 2 before running.
-
-  **What it does:** Confirms the exact subfolder structure wget created so the notebook path variable is correct.
-
-  **Why this approach:** wget mirrors the URL structure. The exact subdirectory depth depends on how wget was invoked.
-
-  **Assumptions:**
-  - wget was run with `-r -N -c -np` flags from `~/Neonatal/`
-  - Files landed in `data/raw/physionet.org/files/picsdb/1.0.0/`
-
-  **Risks:**
-  - Path differs from expected → mitigation: update `data_path` in Cell 2 of notebook 01 to match actual path from `find` output above
-
-  **Git Checkpoint:**
-  ```bash
-  git add notebooks/01_pics_exploration.ipynb
-  git commit -m "step 2: confirm and fix data path if needed"
-  ```
-
-  **Subtasks:**
-  - [ ] 🟥 Run `find` command and capture output
-  - [ ] 🟥 Confirm or correct `data_path` in notebook Cell 2
 
   **✓ Verification Test:**
 
@@ -168,327 +102,286 @@ data/processed exists:  ____  (expected: yes after mkdir)
 
   **Action:**
   ```bash
-  python3 -c "
-  import wfdb, os
-  path = 'data/raw/physionet.org/files/picsdb/1.0.0/'
-  records = [f.replace('.hea','') for f in os.listdir(path) if f.endswith('.hea')]
-  print(f'Found {len(records)} records:', records)
-  "
+  python3 -c "import sys; sys.path.insert(0, '.'); from src.features import hrv; print('import OK')" 2>&1 || echo "EXPECTED: may fail until step 2 creates hrv.py"
+  ls ~/Neonatal/src/features/__init__.py
   ```
-  (Run from `~/Neonatal/`)
 
-  **Expected:** `Found 10 records: [...]`
+  **Expected:** `__init__.py` file exists at `src/features/__init__.py`
 
-  **Observe:** Terminal output
+  **Observe:** Terminal output of `ls`
 
-  **Pass:** Exactly 10 records printed with no FileNotFoundError
+  **Pass:** File listed, no error
 
   **Fail:**
-  - If `FileNotFoundError` → path is wrong → run `find data/raw/ -name "*.hea"` to find correct path
-  - If count < 10 → download incomplete → re-run wget
+  - If `No such file or directory` → `touch` command failed → check directory exists with `ls src/`
 
 ---
 
-- [ ] 🟥 **Step 3: Run notebook 01 top to bottom** — *Non-critical: exploration only, no data written*
+- [ ] 🟥 **Step 2: Create `src/features/hrv.py` with `get_serie_describe`** — *Critical: notebook 03 depends on this function*
 
-  **Idempotent:** Yes — read-only, produces plots only.
+  **Idempotent:** Yes — file overwrite produces identical output.
 
-  **Context:** Validates that all 10 infant recordings load correctly, plots raw ECG and respiration, and prints the quality table. This is the acceptance test for the raw data.
-
-  **What to look for when running:**
-  - Cell 4 (plots): you should see clear QRS spikes in the ECG trace
-  - Cell 6 (quality table): check for any infant with std near 0 (dead signal) or high NaN count
-
-  **Git Checkpoint:**
-  ```bash
-  git add notebooks/01_pics_exploration.ipynb
-  git commit -m "step 3: run and validate 01_pics_exploration"
-  ```
-
-  **Subtasks:**
-  - [ ] 🟥 All cells run without error
-  - [ ] 🟥 ECG plot shows visible QRS spikes
-  - [ ] 🟥 Quality table prints 10 rows
-  - [ ] 🟥 No infant has std = 0 or NaN count > 1000
-
-  **✓ Verification Test:**
-
-  **Type:** Integration
-
-  **Action:** Run all cells in `01_pics_exploration.ipynb` via Cursor (Shift+Enter each cell)
-
-  **Expected:**
-  - Cell 2: prints `Found 10 records`
-  - Cell 3: prints `Sampling frequency: 500 Hz`, `Channels: ['ECG', 'RESP']`
-  - Cell 4: two plots render without error
-  - Cell 6: table with 10 rows, all stds > 0.01, NaNs = 0
-
-  **Observe:** Notebook cell outputs in Cursor
-
-  **Pass:** All 6 cells produce output with no red error traceback
-
-  **Fail:**
-  - If `KeyError` on channel index → ECG is not index 0 → check `record.sig_name` output and swap index in Cell 3
-  - If plot is flat line → signal is corrupted → note which infant, skip in notebook 02
-
----
-
-### Phase 2 — Signal Cleaning & R-Peak Detection (Notebook 02)
-
-**Goal:** Clean ECG signal, detect R-peaks, compute RR intervals, remove ectopic beats, save `data/processed/<infant>_rr_clean.csv` for each infant. Output feeds directly into notebook 03 HRV extraction.
-
----
-
-- [ ] 🟥 **Step 4: Place notebook 02 in repo** — *Non-critical: file placement only*
-
-  **Idempotent:** Yes.
-
-  ```bash
-  cp ~/Downloads/02_signal_cleaning.ipynb ~/Neonatal/notebooks/02_signal_cleaning.ipynb
-  ```
-
-  **Git Checkpoint:**
-  ```bash
-  git add notebooks/02_signal_cleaning.ipynb
-  git commit -m "step 4: add 02_signal_cleaning notebook"
-  ```
-
-  **✓ Verification Test:**
-
-  **Type:** Unit
-
-  **Action:** `ls ~/Neonatal/notebooks/`
-
-  **Expected:** Both `01_pics_exploration.ipynb` and `02_signal_cleaning.ipynb` present
-
-  **Pass:** Both files listed
-
-  **Fail:**
-  - If missing → re-run cp command
-
----
-
-- [ ] 🟥 **Step 5: Run bandpass filter cell — confirm noise removed** — *Critical: all HRV features depend on clean signal*
-
-  **Idempotent:** Yes — filter is a pure function, same input always produces same output.
-
-  **Context:** Raw NICU ECG contains baseline wander (< 0.5Hz), power line interference (50Hz), and high-frequency equipment noise (> 40Hz). The bandpass filter (0.5–40Hz) removes all three. If this step is wrong, R-peak detection fails silently — peaks land in noise instead of true heartbeats.
+  **Context:** This is the core feature encoding function. It takes a 1D numpy array of RR intervals, wraps it in a DataFrame, calls `.describe()`, and returns a flat dictionary of stats. Every window in the feature matrix is produced by this function. If the output keys change, the feature matrix schema breaks.
 
   **Pre-Read Gate:**
-  - Confirm Cell 2 loaded signal without error (Step 2 passed)
-  - Confirm `fs = 500` printed in Cell 2 output before running filter cell
-
-  **What it does:** Applies a 4th-order Butterworth bandpass filter using `filtfilt` (zero phase shift). Plots raw vs filtered side by side.
-
-  **Why this approach:** `filtfilt` applies the filter forward and backward — eliminates phase delay that would shift R-peak positions and corrupt RR interval timing.
-
-  **Assumptions:**
-  - `ecg_raw` and `fs` variables are defined from Cell 2
-  - ECG is sampled at 500Hz
-
-  **Risks:**
-  - Filter removes real signal if cutoffs wrong → mitigation: visually confirm filtered plot still shows clear QRS spikes, not flat
-  - `filtfilt` fails on very short signals → mitigation: 30,000 samples (60s) is well above minimum
-
-  **✓ Verification Test:**
-
-  **Type:** Unit
-
-  **Action:** Run bandpass filter cell. Inspect the two-panel plot.
-
-  **Expected:**
-  - Bottom panel (filtered) shows same spike pattern as top panel (raw) but smoother baseline
-  - No flat sections
-  - QRS spikes remain sharp and visible
-
-  **Observe:** Matplotlib plot rendered in Cursor notebook
-
-  **Pass:** Filtered signal visually cleaner than raw, QRS spikes preserved
-
-  **Fail:**
-  - If filtered signal is flat → cutoff frequencies inverted (high < low) → swap `lowcut` and `highcut` values
-  - If no visible difference → signal was already clean or NaN-heavy → check raw signal stats from notebook 01
-
----
-
-- [ ] 🟥 **Step 6: Run R-peak detection cell — confirm beat count is physiologically plausible** — *Critical: RR intervals are the direct input to HRV*
-
-  **Idempotent:** Yes — deterministic algorithm on same input.
-
-  **Context:** R-peaks are the sharp upward deflections in ECG — each is one heartbeat. Preterm infants have heart rates of 120–180 bpm. In 60 seconds that means 120–180 peaks. Outside that range = something is wrong.
-
-  **What it does:** Calls `nk.ecg_peaks` (Pan-Tompkins algorithm). Prints detected count and average bpm. Plots red dots on peaks over first 10 seconds.
-
-  **Assumptions:**
-  - `ecg_filtered` and `fs` defined from previous cells
-  - neurokit2 >= 0.2.0 installed
-
-  **Risks:**
-  - Pan-Tompkins misses peaks in very noisy segments → mitigation: visual check of the red-dot plot — every spike should have exactly one red dot
-  - Double-detection (two dots per spike) → ectopic filter in next cell removes these
-
-  **✓ Verification Test:**
-
-  **Type:** Integration
-
-  **Action:** Run R-peak cell. Check printed output.
-
-  **Expected:**
-  - `Detected N R-peaks` where N is between 120 and 180 (for 60s recording)
-  - `Average heart rate: X bpm` where X is between 120 and 180
-  - Plot shows red dots sitting on peak tips, not in troughs or noise
-
-  **Observe:** Printed output + matplotlib plot
-
-  **Pass:** Peak count in physiological range, dots visually on peaks
-
-  **Fail:**
-  - If count < 60 → likely detecting noise, not beats → go back and check filter step
-  - If count > 300 → double detection → increase `nk.ecg_peaks` method sensitivity threshold
-  - If red dots in wrong position → wrong channel loaded → confirm `ecg_raw = record.p_signal[:, 0]`
-
----
-
-- [ ] 🟥 **Step 7: Run RR interval + ectopic filter cells — confirm clean intervals saved** — *Critical: output file feeds notebook 03*
-
-  **Idempotent:** Yes — CSV overwrite produces identical output on re-run.
-
-  **Context:** RR intervals are the time gaps between consecutive heartbeats in milliseconds. Ectopic beats (caused by noise or arrhythmia) produce abnormally short or long intervals that would inflate HRV metrics. The 20% threshold filter removes these. The cleaned output is saved to `data/processed/` — this is the handoff point to notebook 03.
-
-  **What it does:**
-  1. Computes `np.diff(rpeaks) / fs * 1000` → RR intervals in ms
-  2. Removes intervals > 20% from local median
-  3. Saves to `data/processed/<record_name>_rr_clean.csv`
-
-  **Assumptions:**
-  - `rpeaks` array defined from Step 6
-  - `data/processed/` directory exists
-
   ```bash
-  # Run this before executing the save cell if directory doesn't exist
-  mkdir -p ~/Neonatal/data/processed/
+  # Confirm file does not already exist with conflicting content
+  cat ~/Neonatal/src/features/hrv.py 2>/dev/null || echo "FILE DOES NOT EXIST — safe to create"
   ```
+  If file exists with content → read it fully before proceeding. Do not overwrite without checking.
 
-  **Risks:**
-  - Too many beats removed (> 10%) → signal quality too low for this infant → flag and skip
-  - CSV not saved → `data/processed/` doesn't exist → run mkdir above
+  **Self-Contained Rule:** Code block below is complete and runnable as written.
 
-  **Git Checkpoint:**
-  ```bash
-  git add notebooks/02_signal_cleaning.ipynb
-  git commit -m "step 7: run signal cleaning, save RR intervals to data/processed"
-  ```
-
-  **Subtasks:**
-  - [ ] 🟥 RR interval stats printed (mean, std, min, max)
-  - [ ] 🟥 Ectopic removal prints removed count < 10% of total
-  - [ ] 🟥 CSV file exists in `data/processed/`
-
-  **✓ Verification Test:**
-
-  **Type:** Integration
-
-  **Action:**
-  ```bash
-  ls ~/Neonatal/data/processed/
-  python3 -c "
-  import pandas as pd
-  df = pd.read_csv('data/processed/infant1_rr_clean.csv')
-  print(f'Rows: {len(df)}, Mean RR: {df.rr_ms.mean():.1f}ms, NaNs: {df.rr_ms.isna().sum()}')
-  "
-  ```
-  (Run from `~/Neonatal/`, replace `infant1` with actual record name)
-
-  **Expected:**
-  - `Rows: N` where N > 100
-  - `Mean RR: X` where X is between 333ms (180bpm) and 500ms (120bpm)
-  - `NaNs: 0`
-
-  **Observe:** Terminal output
-
-  **Pass:** CSV exists, row count > 100, mean RR in physiological range, zero NaNs
-
-  **Fail:**
-  - If file not found → `data/processed/` missing → run `mkdir -p data/processed/`
-  - If mean RR outside range → wrong units or wrong channel → check `fs` value and channel index
-  - If NaNs > 0 → ectopic filter produced NaN → check filter function output
-
----
-
-- [ ] 🟥 **Step 8: Run cleaning pipeline for all 10 infants** — *Non-critical: loop extension of Steps 5–7*
-
-  **Idempotent:** Yes — CSV overwrite is safe.
-
-  **Context:** Steps 5–7 ran on infant 1 only. This step loops the same pipeline over all 10 infants and saves one CSV per infant. At the end, `data/processed/` should have 10 files.
-
-  **What it does:** Adds a loop around the cleaning pipeline in a new cell at the bottom of notebook 02.
+  **No-Placeholder Rule:** No `<VALUE>` tokens present.
 
   ```python
-  for record_name in records:
-      rec = wfdb.rdrecord(os.path.join(data_path, record_name), sampfrom=0, sampto=300000)
-      ecg = rec.p_signal[:, 0]
-      ecg_f = bandpass_filter(ecg, fs=fs)
-      _, info = nk.ecg_peaks(ecg_f, sampling_rate=fs)
-      rpeaks = info['ECG_R_Peaks']
-      rr = np.diff(rpeaks) / fs * 1000
-      rr_clean, mask = filter_ectopic_beats(rr)
-      removed_pct = (~mask).sum() / len(mask) * 100
-      print(f'{record_name}: {len(rr_clean)} clean beats, {removed_pct:.1f}% removed')
-      pd.DataFrame({'rr_ms': rr_clean}).to_csv(
-          f'../data/processed/{record_name}_rr_clean.csv', index=False)
+  # src/features/hrv.py
+  import pandas as pd
+  import numpy as np
+
+
+  def get_serie_describe(rr_intervals):
+      """
+      Takes a 1D numpy array of RR intervals (ms) and returns a flat dictionary
+      of statistical features: mean, std, min, max, 25th, 50th, 75th percentile.
+
+      Adapted from acampillos/sepsis-prediction preprocessing/util.py.
+      Modified to accept numpy array input instead of DataFrame,
+      and to use record_name instead of icustay_id.
+
+      Parameters
+      ----------
+      rr_intervals : np.array
+          1D array of RR intervals in milliseconds
+
+      Returns
+      -------
+      dict
+          Flat dictionary of statistical features keyed as 'rr_ms_mean',
+          'rr_ms_std', 'rr_ms_min', 'rr_ms_max', 'rr_ms_25%', 'rr_ms_50%', 'rr_ms_75%'
+      """
+      serie = pd.DataFrame({'rr_ms': rr_intervals})
+      serie_describe = serie.describe().transpose().drop(columns=['count'])
+
+      values = dict()
+      for index, row in serie_describe.iterrows():
+          for col in row.index:
+              values[f'{index}_{col}'] = row[col]
+      return values
+
+
+  def get_window_features(rr_intervals, record_name, window_idx):
+      """
+      Wraps get_serie_describe with record metadata for building feature matrix rows.
+
+      Parameters
+      ----------
+      rr_intervals : np.array
+          1D array of RR intervals in milliseconds for this window
+      record_name : str
+          Infant record identifier (e.g. 'infant1')
+      window_idx : int
+          Index of the window within the recording
+
+      Returns
+      -------
+      dict
+          Feature dictionary with record metadata + statistical features
+      """
+      features = get_serie_describe(rr_intervals)
+      features['record_name'] = record_name
+      features['window_idx'] = window_idx
+      return features
+  ```
+
+  **What it does:** Defines two functions — `get_serie_describe` encodes a window of RR intervals as statistical features; `get_window_features` wraps it with record metadata for building the feature matrix DataFrame.
+
+  **Why this approach:** `.describe()` produces 7 statistics in one call (mean, std, min, 25%, 50%, 75%, max). Flat dictionary output maps directly to a DataFrame row — one row per window.
+
+  **Assumptions:**
+  - `rr_intervals` is a clean 1D numpy array (ectopic beats already removed in notebook 02)
+  - pandas >= 1.0 installed in venv
+
+  **Risks:**
+  - Empty array input crashes `.describe()` → mitigation: caller must check `len(rr_intervals) > 0` before calling
+  - Key naming changes if pandas version changes `.describe()` output → mitigation: pin pandas version in requirements.txt
+
+  **Git Checkpoint:**
+  ```bash
+  git add src/features/hrv.py
+  git commit -m "step 2: add get_serie_describe and get_window_features to src/features/hrv.py"
+  ```
+
+  **Subtasks:**
+  - [ ] 🟥 File created at `src/features/hrv.py`
+  - [ ] 🟥 Both functions defined with correct signatures
+  - [ ] 🟥 File importable from project root
+
+  **✓ Verification Test:**
+
+  **Type:** Unit
+
+  **Action:**
+  ```bash
+  cd ~/Neonatal
+  python3 -c "
+  import sys
+  sys.path.insert(0, '.')
+  import numpy as np
+  from src.features.hrv import get_serie_describe, get_window_features
+
+  # Test with synthetic RR intervals (120-180bpm range = 333-500ms)
+  rr = np.array([420, 415, 430, 410, 425, 418, 422, 435, 408, 419], dtype=float)
+  result = get_serie_describe(rr)
+  print('Keys:', list(result.keys()))
+  print('Mean RR:', round(result['rr_ms_mean'], 1))
+  print('Std RR:', round(result['rr_ms_std'], 1))
+
+  row = get_window_features(rr, 'infant1', 0)
+  print('Record name:', row['record_name'])
+  print('Window idx:', row['window_idx'])
+  print('Feature count:', len(row))
+  "
+  ```
+
+  **Expected:**
+  ```
+  Keys: ['rr_ms_mean', 'rr_ms_std', 'rr_ms_min', 'rr_ms_25%', 'rr_ms_50%', 'rr_ms_75%', 'rr_ms_max']
+  Mean RR: 420.2
+  Std RR: 8.0  (approximately)
+  Record name: infant1
+  Window idx: 0
+  Feature count: 9
+  ```
+
+  **Observe:** Terminal output
+
+  **Pass:** All 5 print lines produce expected values, no traceback
+
+  **Fail:**
+  - If `ModuleNotFoundError` → `__init__.py` missing → re-run Step 1
+  - If `KeyError` → pandas `.describe()` column names differ → print `serie.describe()` and check column names
+  - If `Feature count` != 9 → function returning wrong keys → check `get_window_features` return dict
+
+---
+
+### Phase 2 — Validate Against Real Processed Data
+
+**Goal:** `get_serie_describe` runs on actual notebook 02 output CSVs and produces a valid feature row.
+
+---
+
+- [ ] 🟥 **Step 3: Run feature encoding on one real RR CSV** — *Non-critical: validation only, no new files written*
+
+  **Idempotent:** Yes — read-only.
+
+  **Context:** Confirms the function works end-to-end on real PICS data, not just synthetic arrays. This is the integration test before notebook 03 is built.
+
+  **Pre-Read Gate:**
+  ```bash
+  # Confirm at least one CSV exists
+  ls ~/Neonatal/data/processed/ | head -3
+  ```
+  If no CSVs exist → PICS download not complete → skip this step and return when data lands.
+
+  ```bash
+  cd ~/Neonatal
+  python3 -c "
+  import sys, os
+  sys.path.insert(0, '.')
+  import pandas as pd
+  import numpy as np
+  from src.features.hrv import get_serie_describe, get_window_features
+
+  # Load first available CSV
+  csv_files = [f for f in os.listdir('data/processed/') if f.endswith('.csv')]
+  first_csv = csv_files[0]
+  df = pd.read_csv(f'data/processed/{first_csv}')
+  rr = df['rr_ms'].values
+
+  print(f'Loaded {first_csv}: {len(rr)} RR intervals')
+  print(f'Mean RR: {rr.mean():.1f}ms ({60000/rr.mean():.0f} bpm)')
+
+  # Encode first 50-beat window
+  window = rr[:50]
+  features = get_window_features(window, first_csv.replace('_rr_clean.csv',''), 0)
+  print('Feature row:', features)
+  "
   ```
 
   **Git Checkpoint:**
   ```bash
-  git add notebooks/02_signal_cleaning.ipynb
-  git add data/processed/
-  git commit -m "step 8: run cleaning pipeline for all 10 infants, save RR CSVs"
+  git add src/features/hrv.py
+  git commit -m "step 3: validate get_serie_describe on real PICS RR intervals"
   ```
-
-  **Subtasks:**
-  - [ ] 🟥 Loop runs without error for all 10 infants
-  - [ ] 🟥 10 CSV files exist in `data/processed/`
-  - [ ] 🟥 No infant has > 10% beats removed (flag if so)
 
   **✓ Verification Test:**
 
   **Type:** Integration
 
-  **Action:**
-  ```bash
-  ls ~/Neonatal/data/processed/ | wc -l
-  ```
+  **Action:** Run command above
 
-  **Expected:** `10`
+  **Expected:**
+  - `Loaded infant1_rr_clean.csv: N RR intervals` where N > 100
+  - `Mean RR: Xms (Y bpm)` where Y is between 120 and 180
+  - Feature row printed with 9 keys, no NaN values
 
   **Observe:** Terminal output
 
-  **Pass:** Exactly 10 CSV files in `data/processed/`
+  **Pass:** Feature row printed with all numeric values, mean RR in physiological range
 
   **Fail:**
-  - If count < 10 → loop errored on one infant → check printed output for which one failed
-  - If a file has 0 rows → signal too short or fully corrupted → flag that infant and exclude from modelling
+  - If `FileNotFoundError` → data/processed/ empty → PICS still downloading, skip step
+  - If `NaN` in features → RR array has NaN values → re-run notebook 02 ectopic filter cell
+  - If mean RR outside 333–500ms range → wrong units → check notebook 02 `/ fs * 1000` conversion
 
 ---
 
-## Regression Guard
+- [ ] 🟥 **Step 4: Update `requirements.txt`** — *Non-critical: dependency pinning*
 
-**Systems at risk:** None — these are greenfield notebooks, no existing code modified.
+  **Idempotent:** Yes — file overwrite is safe.
+
+  ```bash
+  cd ~/Neonatal
+  pip freeze > requirements.txt
+  ```
+
+  **What it does:** Pins all installed package versions so the environment is reproducible.
+
+  **Git Checkpoint:**
+  ```bash
+  git add requirements.txt
+  git commit -m "step 4: pin requirements after adding src/features/hrv.py"
+  ```
+
+  **✓ Verification Test:**
+
+  **Type:** Unit
+
+  **Action:** `grep pandas ~/Neonatal/requirements.txt`
+
+  **Expected:** `pandas==X.X.X` line present
+
+  **Observe:** Terminal output
+
+  **Pass:** pandas version line present in requirements.txt
+
+  **Fail:**
+  - If empty file → `pip freeze` failed → confirm venv is active with `which python`
 
 ---
 
 ## Rollback Procedure
 
 ```bash
-# Remove notebooks if something is badly wrong
 cd ~/Neonatal
-git revert HEAD  # reverts last commit
+git revert HEAD    # reverts requirements.txt update (Step 4)
+git revert HEAD~1  # reverts Step 3 commit
+git revert HEAD~2  # reverts hrv.py creation (Step 2)
+git revert HEAD~3  # reverts __init__.py creation (Step 1)
 
-# Remove processed data and start clean
-rm -rf data/processed/*.csv
-
-# Confirm clean state
-ls data/processed/  # should be empty
+# Confirm rollback
+ls src/features/hrv.py  # should say: No such file or directory
 ```
 
 ---
@@ -498,13 +391,12 @@ ls data/processed/  # should be empty
 | Phase | Check | How to Confirm | Status |
 |-------|-------|----------------|--------|
 | Pre-flight | venv active | `which python` returns neonatal path | ⬜ |
-| Pre-flight | All packages installed | `python -c "import wfdb, neurokit2"` no error | ⬜ |
-| Pre-flight | 10 .hea files present | `find data/raw/ -name "*.hea" \| wc -l` = 10 | ⬜ |
-| Phase 1 | data_path correct | Step 2 verification passes | ⬜ |
-| Phase 1 | Notebook 01 runs clean | All 6 cells no error | ⬜ |
-| Phase 2 | Filtered signal has QRS spikes | Visual check Step 5 | ⬜ |
-| Phase 2 | Peak count in 120–180 range | Step 6 printed output | ⬜ |
-| Phase 2 | 10 CSVs saved | `ls data/processed/ \| wc -l` = 10 | ⬜ |
+| Pre-flight | pandas importable | `python3 -c "import pandas"` no error | ⬜ |
+| Phase 1 | `src/features/` exists | `ls src/features/` no error | ⬜ |
+| Phase 1 | `__init__.py` created | `ls src/features/__init__.py` | ⬜ |
+| Phase 1 | `hrv.py` importable | Step 2 verification passes | ⬜ |
+| Phase 2 | RR CSVs exist | `ls data/processed/*.csv \| wc -l` = 10 | ⬜ |
+| Phase 2 | Feature row has no NaNs | Step 3 verification passes | ⬜ |
 
 ---
 
@@ -512,12 +404,11 @@ ls data/processed/  # should be empty
 
 | Feature | Target | Verification |
 |---------|--------|--------------|
-| Notebook 01 loads all infants | 10 records, no errors | Run notebook, Cell 6 prints 10 rows |
-| Raw ECG plotted | Visible QRS spikes | Cell 4 plot renders, spikes visible |
-| Bandpass filter applied | Cleaner baseline, spikes preserved | Step 5 two-panel plot |
-| R-peaks detected | 120–180 bpm range | Step 6 printed bpm output |
-| RR intervals saved | 10 CSVs, mean RR 333–500ms | Step 8 verification test |
-| No NaNs in output | 0 NaNs per CSV | Step 7 python verification |
+| `get_serie_describe` importable | No ModuleNotFoundError | `from src.features.hrv import get_serie_describe` |
+| Returns 7 statistical features | Keys: mean, std, min, 25%, 50%, 75%, max | Step 2 verification test |
+| Works on synthetic data | Mean RR ~420ms for test input | Step 2 print output |
+| Works on real PICS data | Mean RR 333–500ms, no NaNs | Step 3 verification test |
+| requirements.txt updated | pandas version pinned | `grep pandas requirements.txt` |
 
 ---
 
