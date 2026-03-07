@@ -1,0 +1,6 @@
+# Neonatal sepsis pipeline — notebooks 01 & 02
+neurokit2>=0.2.0
+numpy
+pandas
+scipy
+matplotlib
