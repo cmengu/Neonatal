@@ -68,14 +68,21 @@ def extract_labels(patient_id):
 
 for patient_id in PATIENTS:
     print(f"\n── {patient_id} ──────────────────────────────")
-    features_df = extract_features(patient_id)
-    feat_path = PROCESSED_DIR / f"{patient_id}_features.csv"
-    features_df.to_csv(feat_path, index=False)
-    print(f"  features: {features_df.shape} → {feat_path}")
+    try:
+        features_df = extract_features(patient_id)
+        feat_path = PROCESSED_DIR / f"{patient_id}_features.csv"
+        features_df.to_csv(feat_path, index=False)
+        print(f"  features: {features_df.shape} → {feat_path}")
 
-    labels_df = extract_labels(patient_id)
-    label_path = PROCESSED_DIR / f"{patient_id}_labels.csv"
-    labels_df.to_csv(label_path, index=False)
-    print(f"  labels:   {labels_df.shape} → {label_path}")
+        labels_df = extract_labels(patient_id)
+        label_path = PROCESSED_DIR / f"{patient_id}_labels.csv"
+        labels_df.to_csv(label_path, index=False)
+        print(f"  labels:   {labels_df.shape} → {label_path}")
+    except FileNotFoundError as e:
+        print(f"  ERROR: Missing input file for {patient_id}: {e}")
+        raise
+    except Exception as e:
+        print(f"  ERROR: {patient_id} failed: {e}")
+        raise
 
 print("\n✅ Notebook 03 complete.")

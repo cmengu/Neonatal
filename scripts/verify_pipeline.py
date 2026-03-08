@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
 """Verify notebooks 01 & 02 pipeline with neurokit2 simulated data. No matplotlib."""
+import os
+from pathlib import Path
+
 import neurokit2 as nk
 import numpy as np
 import pandas as pd
 from scipy.signal import butter, filtfilt
-import os
+
+REPO_ROOT = Path(os.getcwd())
+if REPO_ROOT.name == "notebooks":
+    REPO_ROOT = REPO_ROOT.parent
+PROCESSED_DIR = REPO_ROOT / "data" / "processed"
 
 # Simulated data (notebook 01)
 ecg_raw = nk.ecg_simulate(duration=60, sampling_rate=500)
@@ -36,8 +43,8 @@ rr = np.diff(rpeaks) / fs * 1000
 rr_clean, mask = filter_ectopic_beats(rr)
 print(f"  RR: mean={rr_clean.mean():.1f}ms, removed {(~mask).sum()} ectopics")
 
-os.makedirs("data/processed", exist_ok=True)
-pd.DataFrame({"rr_ms": rr_clean}).to_csv("data/processed/simulated_1_rr_clean.csv", index=False)
+PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+pd.DataFrame({"rr_ms": rr_clean}).to_csv(PROCESSED_DIR / "simulated_1_rr_clean.csv", index=False)
 print("  Saved simulated_1_rr_clean.csv")
 
 # All 10 infants
@@ -48,11 +55,11 @@ for i in range(1, 11):
     rp = info["ECG_R_Peaks"]
     rr = np.diff(rp) / fs * 1000
     rr_c, m = filter_ectopic_beats(rr)
-    pd.DataFrame({"rr_ms": rr_c}).to_csv(f"data/processed/simulated_{i}_rr_clean.csv", index=False)
+    pd.DataFrame({"rr_ms": rr_c}).to_csv(PROCESSED_DIR / f"simulated_{i}_rr_clean.csv", index=False)
 
-n_csv = len([f for f in os.listdir("data/processed") if f.endswith(".csv")])
+n_csv = len(list(PROCESSED_DIR.glob("*.csv")))
 print(f"Notebook 02 pipeline: OK, {n_csv} CSVs in data/processed/")
 
 # Step 7 verification
-df = pd.read_csv("data/processed/simulated_1_rr_clean.csv")
+df = pd.read_csv(PROCESSED_DIR / "simulated_1_rr_clean.csv")
 print(f"Step 7 check: Rows={len(df)}, Mean RR={df.rr_ms.mean():.1f}ms, NaNs={df.rr_ms.isna().sum()}")

@@ -33,6 +33,8 @@ def get_serie_describe(rr_intervals):
     ValueError
         If rr_intervals is empty (caller must ensure len > 0).
     """
+    if len(rr_intervals) == 0:
+        raise ValueError("rr_intervals cannot be empty")
     serie = pd.DataFrame({"rr_ms": rr_intervals})
     serie_describe = serie.describe().transpose().drop(columns=["count"])
 
