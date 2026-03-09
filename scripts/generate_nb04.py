@@ -98,10 +98,13 @@ cell2 = """def align_labels_to_windows(patient_id):
         else:
             dropped_range += 1
 
+    # Alignment bug check: if any annotation is within rr range and trim_offset=0, at least one must map
     if trim_offset == 0 and len(labels_df) > 0:
-        assert len(labelled_windows) > 0, (
-            f"{patient_id}: all {len(labels_df)} annotations dropped but trim_offset=0 — alignment bug"
-        )
+        in_range = (labels_df["sample_idx"] <= cumulative_pos[-1]).any()
+        if in_range:
+            assert len(labelled_windows) > 0, (
+                f"{patient_id}: annotations in range but all dropped — alignment bug"
+            )
     print(f"  {patient_id}: {len(labels_df)} annotations -> "
           f"{len(labelled_windows)} labelled windows "
           f"(dropped_prefix={dropped_prefix}, dropped_range={dropped_range}, "
