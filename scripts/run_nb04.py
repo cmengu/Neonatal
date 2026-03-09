@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Run notebook 04 baseline deviation logic. Produces *_windowed.csv and all_patients_windowed.csv."""
 import os
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -10,7 +9,6 @@ import pandas as pd
 REPO_ROOT = Path(os.getcwd())
 if REPO_ROOT.name == "notebooks":
     REPO_ROOT = REPO_ROOT.parent
-sys.path.insert(0, str(REPO_ROOT))
 
 PROCESSED_DIR = REPO_ROOT / "data" / "processed"
 PATIENTS = [f"infant{i}" for i in range(1, 11)]
