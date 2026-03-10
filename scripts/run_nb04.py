@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 """Run notebook 04 baseline deviation logic. Produces *_windowed.csv and all_patients_windowed.csv."""
 import os
+os.environ["MPLBACKEND"] = "Agg"
+_cwd = os.path.dirname(os.path.abspath(__file__))
+os.environ["MPLCONFIGDIR"] = os.path.join(_cwd, "..", ".mpl_config")
+# Avoid matplotlib font crash on macOS (KeyError '_items' / slow system_profiler)
+os.environ["PATH"] = "/usr/bin:/bin:/usr/local/bin"
+import matplotlib
+matplotlib.use("Agg")  # non-interactive backend — required for nohup
+import os
 from pathlib import Path
 
 import numpy as np
@@ -21,33 +29,32 @@ HRV_COLS = [
     "rr_ms_max", "rr_ms_25%", "rr_ms_50%", "rr_ms_75%"
 ]
 
-trim_df = pd.read_csv(PROCESSED_DIR / "trim_offsets.csv")
-TRIM_OFFSETS = dict(zip(trim_df["record_name"], trim_df["start_idx_samples"].astype(int)))
+frp_df = pd.read_csv(PROCESSED_DIR / "first_r_peaks.csv")
+FIRST_R_PEAKS = dict(zip(frp_df["record_name"], frp_df["first_r_peak_absolute"].astype(int)))
 
 print(f"REPO_ROOT:     {REPO_ROOT}")
 print(f"PROCESSED_DIR: {PROCESSED_DIR}")
 print(f"LOOKBACK:      {LOOKBACK} windows")
 print(f"Patients:      {PATIENTS}")
-print(f"Trim offsets:  {TRIM_OFFSETS}")
+print(f"First R-peaks: {FIRST_R_PEAKS}")
 
 
 def align_labels_to_windows(patient_id):
     rr_ms = pd.read_csv(PROCESSED_DIR / f"{patient_id}_rr_clean.csv")["rr_ms"].values
     labels_df = pd.read_csv(PROCESSED_DIR / f"{patient_id}_labels.csv")
     rr_samples = rr_ms / 1000.0 * FS_ECG
-    cumulative_pos = np.cumsum(rr_samples)
+    first_r_peak_abs = FIRST_R_PEAKS[patient_id]
+    cumulative_pos = first_r_peak_abs + np.cumsum(rr_samples)
     n_windows = (len(rr_ms) - WINDOW_SIZE) // STEP_SIZE + 1
-    trim_offset = TRIM_OFFSETS.get(patient_id, 0)
     labelled_windows = set()
     dropped_prefix = 0
     dropped_range = 0
     for _, row in labels_df.iterrows():
         sample_idx = row["sample_idx"]
-        adjusted_sample_idx = sample_idx - trim_offset
-        if adjusted_sample_idx < 0:
+        if sample_idx < first_r_peak_abs:
             dropped_prefix += 1
             continue
-        matches = np.where(cumulative_pos >= adjusted_sample_idx)[0]
+        matches = np.where(cumulative_pos >= sample_idx)[0]
         if len(matches) == 0:
             dropped_range += 1
             continue
@@ -57,8 +64,8 @@ def align_labels_to_windows(patient_id):
             labelled_windows.add(window_idx)
         else:
             dropped_range += 1
-    # Alignment bug check: if any annotation is within rr range and trim_offset=0, at least one must map
-    if trim_offset == 0 and len(labels_df) > 0:
+    # Alignment bug check: if any annotation is within rr range, at least one must map
+    if len(labels_df) > 0:
         in_range = (labels_df["sample_idx"] <= cumulative_pos[-1]).any()
         if in_range:
             assert len(labelled_windows) > 0, (
@@ -67,7 +74,7 @@ def align_labels_to_windows(patient_id):
     print(f"  {patient_id}: {len(labels_df)} annotations -> "
           f"{len(labelled_windows)} labelled windows "
           f"(dropped_prefix={dropped_prefix}, dropped_range={dropped_range}, "
-          f"trim_offset={trim_offset})")
+          f"first_r_peak_abs={first_r_peak_abs})")
     return labelled_windows
 
 

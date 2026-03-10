@@ -1,0 +1,18 @@
+# Matplotlib font cache (from MPLCONFIGDIR)
+.mpl_config/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data/output (adjust if you commit processed data)
+*.log
+logs/

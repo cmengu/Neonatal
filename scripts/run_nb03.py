@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 """Run notebook 03 HRV extraction logic."""
+import os
+os.environ["MPLBACKEND"] = "Agg"
+_cwd = os.path.dirname(os.path.abspath(__file__))
+os.environ["MPLCONFIGDIR"] = os.path.join(_cwd, "..", ".mpl_config")
+# Avoid matplotlib font crash on macOS (KeyError '_items' / slow system_profiler)
+os.environ["PATH"] = "/usr/bin:/bin:/usr/local/bin"
+import matplotlib
+matplotlib.use("Agg")  # non-interactive backend — required for nohup
 import sys
 import os
 from pathlib import Path
@@ -15,7 +23,7 @@ import wfdb
 import pandas as pd
 import numpy as np
 
-PATIENTS = ["infant1", "infant10"]
+PATIENTS = [f"infant{i}" for i in range(1, 11)]
 PROCESSED_DIR = REPO_ROOT / "data" / "processed"
 RAW_DIR = REPO_ROOT / "data" / "raw" / "physionet.org" / "files" / "picsdb" / "1.0.0"
 WINDOW_SIZE = 50
@@ -79,8 +87,7 @@ for patient_id in PATIENTS:
         labels_df.to_csv(label_path, index=False)
         print(f"  labels:   {labels_df.shape} → {label_path}")
     except FileNotFoundError as e:
-        print(f"  ERROR: Missing input file for {patient_id}: {e}")
-        raise
+        print(f"  WARNING: {patient_id} skipped (missing rr_clean: {e})")
     except Exception as e:
         print(f"  ERROR: {patient_id} failed: {e}")
         raise

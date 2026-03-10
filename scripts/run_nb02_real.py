@@ -1,7 +1,16 @@
 #!/usr/bin/env python3
 """Run notebook 02 real PICS loading logic (config + load cells)."""
-from pathlib import Path
 import os
+os.environ["MPLBACKEND"] = "Agg"
+# Use project-local dir — /tmp can be restricted under nohup
+_cwd = os.path.dirname(os.path.abspath(__file__))
+os.environ["MPLCONFIGDIR"] = os.path.join(_cwd, "..", ".mpl_config")
+# Avoid matplotlib font crash on macOS (KeyError '_items' / slow system_profiler)
+# when system_profiler not on PATH, matplotlib falls back to standard font dirs
+os.environ["PATH"] = "/usr/bin:/bin:/usr/local/bin"
+import matplotlib
+matplotlib.use("Agg")  # non-interactive backend — required for nohup
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
