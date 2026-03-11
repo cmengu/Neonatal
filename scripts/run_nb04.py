@@ -8,8 +8,9 @@ os.environ["MPLCONFIGDIR"] = os.path.join(_cwd, "..", ".mpl_config")
 os.environ["PATH"] = "/usr/bin:/bin:/usr/local/bin"
 import matplotlib
 matplotlib.use("Agg")  # non-interactive backend — required for nohup
-import os
+import logging
 from pathlib import Path
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
 
 import numpy as np
 import pandas as pd
@@ -30,13 +31,15 @@ HRV_COLS = [
 ]
 
 frp_df = pd.read_csv(PROCESSED_DIR / "first_r_peaks.csv")
+missing = [p for p in PATIENTS if p not in frp_df["record_name"].values]
+assert not missing, f"first_r_peaks.csv is missing patients: {missing}"
 FIRST_R_PEAKS = dict(zip(frp_df["record_name"], frp_df["first_r_peak_absolute"].astype(int)))
 
-print(f"REPO_ROOT:     {REPO_ROOT}")
-print(f"PROCESSED_DIR: {PROCESSED_DIR}")
-print(f"LOOKBACK:      {LOOKBACK} windows")
-print(f"Patients:      {PATIENTS}")
-print(f"First R-peaks: {FIRST_R_PEAKS}")
+logging.info("REPO_ROOT:     %s", REPO_ROOT)
+logging.info("PROCESSED_DIR: %s", PROCESSED_DIR)
+logging.info("LOOKBACK:      %s windows", LOOKBACK)
+logging.info("Patients:      %s", PATIENTS)
+logging.info("First R-peaks: %s", FIRST_R_PEAKS)
 
 
 def align_labels_to_windows(patient_id):
@@ -71,10 +74,8 @@ def align_labels_to_windows(patient_id):
             assert len(labelled_windows) > 0, (
                 f"{patient_id}: annotations in range but all dropped — alignment bug"
             )
-    print(f"  {patient_id}: {len(labels_df)} annotations -> "
-          f"{len(labelled_windows)} labelled windows "
-          f"(dropped_prefix={dropped_prefix}, dropped_range={dropped_range}, "
-          f"first_r_peak_abs={first_r_peak_abs})")
+    logging.info("  %s: %s annotations -> %s labelled windows (dropped_prefix=%s, dropped_range=%s, first_r_peak_abs=%s)",
+                 patient_id, len(labels_df), len(labelled_windows), dropped_prefix, dropped_range, first_r_peak_abs)
     return labelled_windows
 
 
@@ -105,26 +106,26 @@ def compute_deviations(patient_id, labelled_windows):
     )
     n_pos = result["label"].sum()
     n_neg = len(result) - n_pos
-    print(f"  {patient_id}: {len(result)} windows after warmup drop "
-          f"(pos={n_pos}, neg={n_neg}, ratio={n_pos/max(len(result),1):.2%})")
+    logging.info("  %s: %s windows after warmup drop (pos=%s, neg=%s, ratio=%.2f%%)",
+                 patient_id, len(result), n_pos, n_neg, 100 * n_pos / max(len(result), 1))
     assert result.isnull().sum().sum() == 0
     return result
 
 
 all_patients = []
 for patient_id in PATIENTS:
-    print(f"\n-- {patient_id} --")
+    logging.info("-- %s --", patient_id)
     labelled_windows = align_labels_to_windows(patient_id)
     windowed_df = compute_deviations(patient_id, labelled_windows)
     out_path = PROCESSED_DIR / f"{patient_id}_windowed.csv"
     windowed_df.to_csv(out_path, index=False)
-    print(f"  Saved: {out_path}")
+    logging.info("  Saved: %s", out_path)
     all_patients.append(windowed_df)
 
 combined = pd.concat(all_patients, ignore_index=True)
 combined.to_csv(PROCESSED_DIR / "all_patients_windowed.csv", index=False)
-print(f"\nNotebook 04 complete.")
-print(f"Combined shape:   {combined.shape}")
-print(f"Total pos labels: {combined['label'].sum()} / {len(combined)}")
-print(f"Overall pos rate: {combined['label'].mean():.2%}")
-print(f"NaN in combined:  {combined.isnull().sum().sum()}")
+logging.info("Notebook 04 complete.")
+logging.info("Combined shape:   %s", combined.shape)
+logging.info("Total pos labels: %s / %s", combined['label'].sum(), len(combined))
+logging.info("Overall pos rate: %.2f%%", 100 * combined['label'].mean())
+logging.info("NaN in combined: %s", combined.isnull().sum().sum())

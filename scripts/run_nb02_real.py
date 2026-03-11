@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Run notebook 02 real PICS loading logic (config + load cells)."""
+import logging
 import os
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
 os.environ["MPLBACKEND"] = "Agg"
 # Use project-local dir — /tmp can be restricted under nohup
 _cwd = os.path.dirname(os.path.abspath(__file__))
@@ -30,9 +32,9 @@ FS_ECG = 500
 ECTOPIC_THRESHOLD = 0.20
 
 PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-print(f"REPO_ROOT:     {REPO_ROOT}")
-print(f"REAL_DATA_DIR: {REAL_DATA_DIR}")
-print(f"PROCESSED_DIR: {PROCESSED_DIR}")
+logging.info("REPO_ROOT:     %s", REPO_ROOT)
+logging.info("REAL_DATA_DIR: %s", REAL_DATA_DIR)
+logging.info("PROCESSED_DIR: %s", PROCESSED_DIR)
 
 
 def load_rr_from_wfdb(record_path, fs, ectopic_threshold):
@@ -41,7 +43,7 @@ def load_rr_from_wfdb(record_path, fs, ectopic_threshold):
     ecg_signal = record[0][:, 0]
     if isinstance(record[1], dict) and "fs" in record[1]:
         fs = record[1]["fs"]
-    print(f"  Signal names: {record[1]['sig_name']}")
+    logging.info("  Signal names: %s", record[1].get('sig_name', ['ECG']))
 
     # Trim flat prefix (affects infant5 — >12 min flat at start)
     window = 100
@@ -51,11 +53,13 @@ def load_rr_from_wfdb(record_path, fs, ectopic_threshold):
             start_idx = i
             break
     if start_idx > 0:
-        print(f"  Trimmed flat prefix: {start_idx} samples ({start_idx/fs:.1f}s)")
+        logging.info("  Trimmed flat prefix: %s samples (%.1fs)", start_idx, start_idx/fs)
     ecg_signal = ecg_signal[start_idx:]
 
     signals, info = nk.ecg_process(ecg_signal, sampling_rate=fs)
     r_peaks = info["ECG_R_Peaks"]
+    if len(r_peaks) == 0:
+        raise ValueError(f"No R-peaks detected for {record_path}. Check signal quality.")
     first_r_peak_abs = int(start_idx + r_peaks[0])
     rr_ms = np.diff(r_peaks) / fs * 1000.0
 
@@ -63,8 +67,8 @@ def load_rr_from_wfdb(record_path, fs, ectopic_threshold):
     mask = np.abs(rr_ms - rolling_median) / rolling_median < ectopic_threshold
     rr_clean = rr_ms[mask]
 
-    print(f"  Raw beats: {len(rr_ms)}, after ectopic removal: {len(rr_clean)}")
-    print(f"  first_r_peak_absolute: {first_r_peak_abs} samples ({first_r_peak_abs/fs:.2f}s)")
+    logging.info("  Raw beats: %s, after ectopic removal: %s", len(rr_ms), len(rr_clean))
+    logging.info("  first_r_peak_absolute: %s samples (%.2fs)", first_r_peak_abs, first_r_peak_abs/fs)
     return rr_clean, first_r_peak_abs
 
 
@@ -76,16 +80,16 @@ if USE_REAL_DATA:
             rr_clean, first_r_peak_abs = load_rr_from_wfdb(record_path, FS_ECG, ECTOPIC_THRESHOLD)
             out_path = PROCESSED_DIR / f"{patient_id}_rr_clean.csv"
             pd.DataFrame({"rr_ms": rr_clean}).to_csv(out_path, index=False)
-            print(f"  Saved: {out_path}  ({len(rr_clean)} rows)")
+            logging.info("  Saved: %s  (%s rows)", out_path, len(rr_clean))
             first_r_peak_rows.append({"record_name": patient_id, "first_r_peak_absolute": first_r_peak_abs})
         except FileNotFoundError as e:
-            print(f"  ERROR: {patient_id} record not found at {record_path}: {e}")
+            logging.error("%s record not found at %s: %s", patient_id, record_path, e)
             raise
         except Exception as e:
-            print(f"  WARNING: {patient_id} skipped ({e})")
+            raise RuntimeError(f"{patient_id} failed: {e}") from e
     frp_df = pd.DataFrame(first_r_peak_rows)
     frp_df.to_csv(PROCESSED_DIR / "first_r_peaks.csv", index=False)
-    print(f"\nSaved: {PROCESSED_DIR / 'first_r_peaks.csv'}")
-    print(frp_df.to_string(index=False))
+    logging.info("Saved: %s", PROCESSED_DIR / "first_r_peaks.csv")
+    logging.info("\n%s", frp_df.to_string(index=False))
 else:
-    print("USE_REAL_DATA=False")
+    logging.info("USE_REAL_DATA=False")

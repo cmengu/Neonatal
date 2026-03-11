@@ -8,9 +8,10 @@ os.environ["MPLCONFIGDIR"] = os.path.join(_cwd, "..", ".mpl_config")
 os.environ["PATH"] = "/usr/bin:/bin:/usr/local/bin"
 import matplotlib
 matplotlib.use("Agg")  # non-interactive backend — required for nohup
+import logging
 import sys
-import os
 from pathlib import Path
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
 
 REPO_ROOT = Path(os.getcwd())
 if REPO_ROOT.name == "notebooks":
@@ -29,9 +30,9 @@ RAW_DIR = REPO_ROOT / "data" / "raw" / "physionet.org" / "files" / "picsdb" / "1
 WINDOW_SIZE = 50
 STEP_SIZE = 25
 
-print(f"REPO_ROOT:     {REPO_ROOT}")
-print(f"PROCESSED_DIR: {PROCESSED_DIR}")
-print(f"RAW_DIR:       {RAW_DIR}")
+logging.info("REPO_ROOT:     %s", REPO_ROOT)
+logging.info("PROCESSED_DIR: %s", PROCESSED_DIR)
+logging.info("RAW_DIR:       %s", RAW_DIR)
 
 
 def extract_features(patient_id):
@@ -69,27 +70,27 @@ def extract_labels(patient_id):
         for s, sym in zip(ann.sample, ann.symbol)
     ]
     df = pd.DataFrame(rows)
-    print(f"  {patient_id}: {len(df)} annotations")
-    print(f"  symbols: {sorted(df['symbol'].unique())}")
+    logging.info("  %s: %s annotations", patient_id, len(df))
+    logging.info("  symbols: %s", sorted(df['symbol'].unique()))
     return df
 
 
 for patient_id in PATIENTS:
-    print(f"\n── {patient_id} ──────────────────────────────")
+    logging.info("── %s ──────────────────────────────", patient_id)
     try:
         features_df = extract_features(patient_id)
         feat_path = PROCESSED_DIR / f"{patient_id}_features.csv"
         features_df.to_csv(feat_path, index=False)
-        print(f"  features: {features_df.shape} → {feat_path}")
+        logging.info("  features: %s → %s", features_df.shape, feat_path)
 
         labels_df = extract_labels(patient_id)
         label_path = PROCESSED_DIR / f"{patient_id}_labels.csv"
         labels_df.to_csv(label_path, index=False)
-        print(f"  labels:   {labels_df.shape} → {label_path}")
+        logging.info("  labels:   %s → %s", labels_df.shape, label_path)
     except FileNotFoundError as e:
-        print(f"  WARNING: {patient_id} skipped (missing rr_clean: {e})")
+        logging.warning("%s skipped (missing rr_clean: %s)", patient_id, e)
     except Exception as e:
-        print(f"  ERROR: {patient_id} failed: {e}")
+        logging.error("%s failed: %s", patient_id, e)
         raise
 
-print("\n✅ Notebook 03 complete.")
+logging.info("Notebook 03 complete.")

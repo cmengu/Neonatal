@@ -25,7 +25,7 @@ STD_THRESH = 0.001  # must match NB02 threshold
 rows = []
 for patient_id in PATIENTS:
     record_path = str(RAW_DIR / f"{patient_id}_ecg")
-    record = wfdb.rdsamp(record_path, sampto=500000)
+    record = wfdb.rdsamp(record_path)
     ecg_signal = record[0][:, 0].astype(float)
 
     start_idx = 0

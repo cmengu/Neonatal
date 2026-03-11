@@ -37,27 +37,28 @@ HRV_COLS = [
     "rr_ms_max", "rr_ms_25%", "rr_ms_50%", "rr_ms_75%"
 ]
 
-# Load trim offsets — written by scripts/extract_trim_offsets.py (Step 1)
-trim_df      = pd.read_csv(PROCESSED_DIR / "trim_offsets.csv")
-TRIM_OFFSETS = dict(zip(trim_df["record_name"], trim_df["start_idx_samples"].astype(int)))
+# Load first R-peak positions — written by scripts/run_nb02_real.py (anchors cumulative_pos)
+frp_df         = pd.read_csv(PROCESSED_DIR / "first_r_peaks.csv")
+missing        = [p for p in PATIENTS if p not in frp_df["record_name"].values]
+assert not missing, f"first_r_peaks.csv is missing patients: {missing}"
+FIRST_R_PEAKS  = dict(zip(frp_df["record_name"], frp_df["first_r_peak_absolute"].astype(int)))
 
 print(f"REPO_ROOT:     {REPO_ROOT}")
 print(f"PROCESSED_DIR: {PROCESSED_DIR}")
 print(f"LOOKBACK:      {LOOKBACK} windows")
 print(f"Patients:      {PATIENTS}")
-print(f"Trim offsets:  {TRIM_OFFSETS}")"""
+print(f"First R-peaks: {FIRST_R_PEAKS}")"""
 
 cell2 = """def align_labels_to_windows(patient_id):
     \"\"\"
     Map annotation sample_idx -> window_idx using cumulative RR sum
-    with trim-offset correction.
+    anchored to first_r_peak_absolute (recording coordinates).
 
     Method:
-      1. Load rr_clean -> cumulative sum in samples (trimmed-signal coordinates)
-      2. Load trim offset for this patient from TRIM_OFFSETS
-      3. For each annotation: adjusted_sample_idx = sample_idx - trim_offset
-         - If adjusted_sample_idx < 0: annotation is in trimmed prefix -> drop
-      4. Find beat_idx: first beat where cumulative_pos >= adjusted_sample_idx
+      1. Load rr_clean, first_r_peak_abs from FIRST_R_PEAKS
+      2. cumulative_pos = first_r_peak_abs + np.cumsum(rr_samples) — in recording coords
+      3. For each annotation: if sample_idx < first_r_peak_abs -> drop (before first beat)
+      4. Find beat_idx: first beat where cumulative_pos >= sample_idx
       5. Map beat_idx -> window_idx: min(beat_idx // STEP_SIZE, n_windows - 1)
       6. Drop annotations outside valid window range
 
@@ -66,26 +67,25 @@ cell2 = """def align_labels_to_windows(patient_id):
     rr_ms     = pd.read_csv(PROCESSED_DIR / f"{patient_id}_rr_clean.csv")["rr_ms"].values
     labels_df = pd.read_csv(PROCESSED_DIR / f"{patient_id}_labels.csv")
 
-    rr_samples     = rr_ms / 1000.0 * FS_ECG
-    cumulative_pos = np.cumsum(rr_samples)
-    n_windows      = (len(rr_ms) - WINDOW_SIZE) // STEP_SIZE + 1
-    trim_offset    = TRIM_OFFSETS.get(patient_id, 0)
+    rr_samples         = rr_ms / 1000.0 * FS_ECG
+    first_r_peak_abs   = FIRST_R_PEAKS[patient_id]
+    cumulative_pos     = first_r_peak_abs + np.cumsum(rr_samples)
+    n_windows          = (len(rr_ms) - WINDOW_SIZE) // STEP_SIZE + 1
 
     labelled_windows = set()
     dropped_prefix   = 0
     dropped_range    = 0
 
     for _, row in labels_df.iterrows():
-        sample_idx          = row["sample_idx"]
-        adjusted_sample_idx = sample_idx - trim_offset
+        sample_idx = row["sample_idx"]
 
-        # Drop annotations that fall inside the trimmed prefix
-        if adjusted_sample_idx < 0:
+        # Drop annotations before first beat
+        if sample_idx < first_r_peak_abs:
             dropped_prefix += 1
             continue
 
-        # Find beat_idx: first beat whose cumulative position >= adjusted_sample_idx
-        matches = np.where(cumulative_pos >= adjusted_sample_idx)[0]
+        # Find beat_idx: first beat whose cumulative position >= sample_idx
+        matches = np.where(cumulative_pos >= sample_idx)[0]
         if len(matches) == 0:
             dropped_range += 1
             continue
@@ -98,8 +98,8 @@ cell2 = """def align_labels_to_windows(patient_id):
         else:
             dropped_range += 1
 
-    # Alignment bug check: if any annotation is within rr range and trim_offset=0, at least one must map
-    if trim_offset == 0 and len(labels_df) > 0:
+    # Alignment bug check: if any annotation is within rr range, at least one must map
+    if len(labels_df) > 0:
         in_range = (labels_df["sample_idx"] <= cumulative_pos[-1]).any()
         if in_range:
             assert len(labelled_windows) > 0, (
@@ -108,7 +108,7 @@ cell2 = """def align_labels_to_windows(patient_id):
     print(f"  {patient_id}: {len(labels_df)} annotations -> "
           f"{len(labelled_windows)} labelled windows "
           f"(dropped_prefix={dropped_prefix}, dropped_range={dropped_range}, "
-          f"trim_offset={trim_offset})")
+          f"first_r_peak_abs={first_r_peak_abs})")
     return labelled_windows"""
 
 cell3 = """def compute_deviations(patient_id, labelled_windows):
@@ -211,7 +211,7 @@ for idx, patient_id in enumerate(PATIENTS):
     ax.set_ylabel("rr_ms_mean_dev", fontsize=7)
     ax.axhline(0, color="grey", linestyle="--", linewidth=0.5)
 
-plt.suptitle("RR Mean Deviation with Bradycardia Events (red) — post trim-offset fix", fontsize=11)
+plt.suptitle("RR Mean Deviation with Bradycardia Events (red) — first_r_peak_abs alignment", fontsize=11)
 plt.tight_layout()
 plt.show()"""
 

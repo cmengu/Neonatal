@@ -1,6 +1,7 @@
 # Neonatal sepsis pipeline — notebooks 01 & 02
 neurokit2>=0.2.0
 numpy
-pandas==2.3.1
+pandas>=2.0,<3
 scipy
 matplotlib
+wfdb>=4.0
