@@ -6,7 +6,6 @@ services:
       - "6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
-    platform: linux/arm64   # M2 Mac — remove this line if Docker reports platform error
     restart: unless-stopped
 
 volumes:

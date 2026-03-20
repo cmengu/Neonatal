@@ -50,9 +50,9 @@ class PipelineResult:
     patient_id: str
     risk_score: float
     risk_level: Literal["RED", "YELLOW", "GREEN"]
-    z_scores: dict
-    hrv_values: dict
-    personal_baseline: dict
+    z_scores: dict[str, float]
+    hrv_values: dict[str, float]
+    personal_baseline: dict[str, dict[str, float]]
     detected_events: list[BradycardiaEvent] = field(default_factory=list)
 
     def get_top_deviated(self, n: int = 3) -> list[FeatureDeviation]:

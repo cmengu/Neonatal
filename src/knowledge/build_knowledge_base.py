@@ -6,6 +6,7 @@ All paths resolved relative to this file — CWD-independent.
 """
 import datetime
 import logging
+import os
 import pickle
 import sys
 from pathlib import Path
@@ -60,8 +61,10 @@ def load_all_chunks() -> list[dict]:
 
 
 def build() -> None:
-    logging.info("Connecting to Qdrant at localhost:6333...")
-    client      = QdrantClient(host="localhost", port=6333)
+    qdrant_host = os.getenv("QDRANT_HOST", "localhost")
+    qdrant_port = int(os.getenv("QDRANT_PORT", "6333"))
+    logging.info("Connecting to Qdrant at %s:%d...", qdrant_host, qdrant_port)
+    client      = QdrantClient(host=qdrant_host, port=qdrant_port)
     dense_model = SentenceTransformer("all-MiniLM-L6-v2")
 
     chunks = load_all_chunks()
@@ -101,7 +104,7 @@ def build() -> None:
                     "category":        chunk["category"],
                     "risk_tier":       chunk["risk_tier"],
                     "embedding_model": "all-MiniLM-L6-v2",
-                    "indexed_at":      datetime.datetime.utcnow().isoformat(),
+                    "indexed_at":      datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 },
             )],
         )

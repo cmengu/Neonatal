@@ -82,12 +82,14 @@ class NeonatalPipeline:
         latest_feat     = feat_df.iloc[-1]
         latest_windowed = windowed_df.iloc[-1]
 
-        assert int(latest_feat["window_idx"]) == int(latest_windowed["window_idx"]), (
-            f"{patient_id}: window_idx mismatch between _features.csv "
-            f"({int(latest_feat['window_idx'])}) and _windowed.csv "
-            f"({int(latest_windowed['window_idx'])}). "
-            "Re-run run_nb03.py then run_nb04.py to regenerate both files."
-        )
+        feat_idx     = int(latest_feat["window_idx"])
+        windowed_idx = int(latest_windowed["window_idx"])
+        if feat_idx != windowed_idx:
+            raise ValueError(
+                f"{patient_id}: window_idx mismatch between _features.csv "
+                f"({feat_idx}) and _windowed.csv ({windowed_idx}). "
+                "Re-run run_nb03.py then run_nb04.py to regenerate both files."
+            )
 
         hrv_values = {col: float(latest_feat[col]) for col in self._feature_cols}
 
@@ -126,12 +128,15 @@ class NeonatalPipeline:
         # awareness only, not for replicating training-label logic.
         events: list[BradycardiaEvent] = []
         if "mean_rr" in feat_df.columns:
-            for _, row in feat_df[feat_df["mean_rr"] > 600.0].iterrows():
-                events.append(BradycardiaEvent(
-                    timestamp_idx=int(row.get("window_idx", 0)),
+            brady_df = feat_df[feat_df["mean_rr"] > 600.0]
+            events = [
+                BradycardiaEvent(
+                    timestamp_idx=int(row["window_idx"]) if "window_idx" in brady_df.columns else i,
                     rr_interval_ms=float(row["mean_rr"]),
                     duration_beats=1,
-                ))
+                )
+                for i, row in enumerate(brady_df.to_dict("records"))
+            ]
 
         return PipelineResult(
             patient_id=patient_id,

@@ -67,7 +67,7 @@ def export() -> None:
     logging.info("Max diff sklearn vs ONNX: %.2e  (threshold 1e-3)", max_diff)
 
     if max_diff >= 1e-3:
-        raise AssertionError(
+        raise RuntimeError(
             f"ONNX parity failed: max_diff={max_diff:.2e} (threshold 1e-3)."
         )
     logging.info("ONNX export verified OK")

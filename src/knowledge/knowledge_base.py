@@ -8,6 +8,7 @@ Usage:
 """
 from __future__ import annotations
 
+import os
 import pickle
 import sys
 from pathlib import Path
@@ -35,8 +36,14 @@ class ClinicalKnowledgeBase:
     Note: FlashRank downloads ~80MB model on first call — expected, not a failure.
     """
 
-    def __init__(self, host: str = "localhost", port: int = 6333) -> None:
-        self.client      = QdrantClient(host=host, port=port)
+    def __init__(
+        self,
+        host: str | None = None,
+        port: int | None = None,
+    ) -> None:
+        _host = host or os.getenv("QDRANT_HOST", "localhost")
+        _port = port or int(os.getenv("QDRANT_PORT", "6333"))
+        self.client = QdrantClient(host=_host, port=_port)
         self.dense_model = SentenceTransformer("all-MiniLM-L6-v2")
         self.reranker    = Ranker(model_name="ms-marco-MiniLM-L-12-v2")
 
@@ -95,5 +102,5 @@ class ClinicalKnowledgeBase:
         reranked = self.reranker.rerank(
             RerankRequest(query=text, passages=candidates)
         )
-        # FlashRank returns dict-like objects; access text via ["text"] or .get()
-        return [r.get("text", r) if isinstance(r, dict) else r.text for r in reranked[:n]]
+        # FlashRank returns dicts with a "text" key (verified against flashrank==0.2.x)
+        return [r["text"] for r in reranked[:n]]

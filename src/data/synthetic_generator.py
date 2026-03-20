@@ -8,6 +8,7 @@ Sources: Fyfe et al. 2003, Goulding et al. 2015 (PMC), Longin et al. 2005.
 """
 from __future__ import annotations
 
+import hashlib
 import sys
 from pathlib import Path
 
@@ -92,7 +93,9 @@ def generate_synthetic_result(
         raise ValueError(f"sepsis_severity must be in [0,1], got {sepsis_severity}")
 
     params = _GA_PARAMS[ga_range]
-    rng    = np.random.default_rng(abs(hash(patient_id)) % (2**32))
+    # hashlib.md5 is stable across Python sessions; hash() is not (PYTHONHASHSEED varies).
+    seed = int(hashlib.md5(patient_id.encode()).hexdigest(), 16) % (2**32)
+    rng  = np.random.default_rng(seed)
 
     # Personal baseline — sample once per patient_id, clamped to physiological mins
     personal_baseline: dict[str, dict[str, float]] = {}
