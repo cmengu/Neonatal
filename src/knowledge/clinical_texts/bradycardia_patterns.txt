@@ -1,0 +1,35 @@
+Isolated bradycardia in a premature neonate at rest, without concurrent HRV suppression, most often reflects normal vagal reflex activity. A single bradycardia event with heart rate falling below 100 bpm lasting fewer than 20 seconds, self-resolving, with RMSSD and pNN50 remaining within 1 standard deviation of personal baseline is not independently predictive of sepsis. Document the event and continue routine monitoring.
+Category: bradycardia_patterns. Risk tier: GREEN.
+
+Recurrent bradycardia is defined as three or more episodes within a 6-hour window. When recurrent bradycardia occurs without HRV suppression (RMSSD and pNN50 within normal range), it warrants increased surveillance but not immediate intervention. Common causes include feeding intolerance, gastroesophageal reflux, and positional apnoea. Reassess at 2-hour intervals and escalate if frequency increases or HRV changes emerge.
+Category: bradycardia_patterns. Risk tier: YELLOW.
+
+Bradycardia with concurrent HRV suppression represents pathological autonomic dysregulation. When a bradycardia event occurs alongside RMSSD z-score below -2.0 and LF/HF ratio above the patient's personal +2.0 threshold, the combination is not reflexive — it reflects central autonomic failure. This pattern in a neonate under 30 weeks is associated with early sepsis or necrotising enterocolitis and requires immediate clinical evaluation.
+Category: bradycardia_patterns. Risk tier: RED.
+
+Bradycardia with concurrent apnoea (apnoeic bradycardia) is a high-risk pattern in premature neonates. A bradycardia event lasting more than 20 seconds, particularly if self-recovery is delayed beyond 30 seconds, requires prompt assessment. When apnoeic bradycardia occurs with HRV suppression (RMSSD z-score below -2.5), the probability of an underlying infectious or metabolic cause exceeds 60% in infants under 28 weeks gestation.
+Category: bradycardia_patterns. Risk tier: RED.
+
+Bradycardia frequency trending upward over 12 hours is a sensitive early indicator even when individual episodes appear isolated. A patient experiencing 1 episode in the first 4-hour block, 2 in the second, and 4 in the third block shows a doubling pattern that warrants proactive escalation. HRV monitoring provides the baseline context to distinguish whether this trend accompanies autonomic deterioration.
+Category: bradycardia_patterns. Risk tier: YELLOW.
+
+Post-feeding bradycardia in premature neonates can be a normal variant. Bradycardia occurring within 30 minutes of enteral feed initiation, resolving spontaneously within 15 seconds, with stable RMSSD and LF/HF ratio, is most likely a vagal response to gut distension. Reducing feed volume or rate is appropriate first-line management. HRV monitoring differentiates this from pathological episodes by confirming preserved autonomic variability.
+Category: bradycardia_patterns. Risk tier: GREEN.
+
+Self-limited bradycardia resolved by light stimulation, occurring in the context of stable HRV metrics over the preceding 6 hours, is unlikely to represent sepsis onset. The neonatal autonomic nervous system is immature and vagal overactivity is common below 32 weeks gestation. Clinical significance increases when: episodes occur at rest without a clear trigger, HRV trends are deteriorating, or episodes require sustained intervention for recovery.
+Category: bradycardia_patterns. Risk tier: GREEN.
+
+Bradycardia presenting for the first time after 72 hours of stability in a previously well premature neonate is a high-sensitivity marker for clinical deterioration. Late-onset bradycardia without a recent feeding, positional, or procedural trigger, especially in the context of temperature instability or feeding intolerance, should prompt blood culture, CRP, and CBC even if RMSSD is only mildly suppressed (z-score -1.5 to -2.0).
+Category: bradycardia_patterns. Risk tier: YELLOW.
+
+Deep bradycardia — heart rate below 60 bpm persisting for more than 10 seconds — requires immediate bedside response regardless of HRV status. This threshold represents severe haemodynamic risk. HRV monitoring provides retrospective context about whether the autonomic pattern was deteriorating before the episode, which informs whether the event is isolated or part of a systemic pattern.
+Category: bradycardia_patterns. Risk tier: RED.
+
+Bradycardia associated with handling or procedures (endotracheal suctioning, cannula insertion, physiotherapy) is expected in extremely premature neonates. These episodes are vasovagal in origin and should not be conflated with spontaneous bradycardia in HRV risk scoring. Algorithmic risk calculation should exclude brady episodes occurring within 5 minutes of documented care interventions.
+Category: bradycardia_patterns. Risk tier: GREEN.
+
+Bradycardia cluster events — three or more episodes within 60 minutes — represent acute haemodynamic instability and require immediate physician assessment irrespective of HRV values. HRV-based risk scoring becomes secondary once cluster bradycardia is identified. The primary action is bedside clinical evaluation, blood gas, and consideration of respiratory support.
+Category: bradycardia_patterns. Risk tier: RED.
+
+Improving bradycardia frequency over 12 hours, in combination with stabilising or improving RMSSD z-score, is a positive prognostic sign. When a patient who showed recurrent bradycardia with mild HRV suppression shows fewer events and RMSSD trending back toward personal baseline, continuing current management and monitoring at routine frequency is appropriate. Document the trend for the attending team.
+Category: bradycardia_patterns. Risk tier: GREEN.

@@ -1,0 +1,11 @@
+Immediate clinical review is warranted when a neonate shows all three: RMSSD z-score below -2.5 from personal baseline, LF/HF z-score above +2.5 from personal baseline, AND two or more bradycardia events in the preceding 6 hours. This combination has a positive predictive value of approximately 0.71 for confirmed sepsis within 24 hours in infants under 32 weeks gestation. Blood culture and CBC with differential should be obtained within 1 hour of identifying this pattern.
+Category: intervention_thresholds. Risk tier: RED.
+
+Reassess in 2 hours when a single HRV feature shows z-score deviation between -2.0 and -2.5 from personal baseline without other concurrent features changing. Single-feature mild deviations can reflect positional changes, feeding state, or sleep state transitions rather than pathology. If the deviation persists or worsens at the 2-hour reassessment, escalate to clinical review. If it normalises, continue routine monitoring.
+Category: intervention_thresholds. Risk tier: YELLOW.
+
+Continue routine monitoring at the standard frequency when all HRV z-scores remain within 1.5 standard deviations of the patient's personal baseline and no bradycardia events have occurred in the preceding 6 hours. Document baseline stability in the patient record. Routine monitoring interval for premature neonates under 32 weeks is continuous HRV assessment with alerts reviewed every 4 hours.
+Category: intervention_thresholds. Risk tier: GREEN.
+
+Increase monitoring frequency to every 15 minutes when HRV shows a directional trend: any two features moving consistently toward their alert thresholds across three or more consecutive windows, even if individual values remain within 2 standard deviations of baseline. Trends that persist for 4 or more hours without reaching alert thresholds should be flagged to the attending neonatologist for awareness even if no immediate action is indicated.
+Category: intervention_thresholds. Risk tier: YELLOW.

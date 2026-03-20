@@ -1,0 +1,29 @@
+Personalised baselines in neonatal HRV monitoring reflect each infant's individual autonomic set-point. Population-average thresholds for RMSSD, SDNN, or LF/HF ratio fail to account for the 30-40% of premature infants whose personal normal range falls outside one standard deviation of the population mean. A neonate whose baseline RMSSD is 5ms is not abnormal — their personal 2-standard-deviation alert threshold is approximately 2ms, not the population threshold of 7ms.
+Category: baseline_interpretation. Risk tier: ALL.
+
+The burn-in period for personalised baseline calculation requires a minimum of 10 consecutive windows of stable HRV before any z-score deviation is computed. This LOOKBACK=10 window approach provides enough history to estimate a rolling mean and standard deviation per feature, while being short enough to capture intra-day physiological shifts. Z-scores computed before 10 windows are excluded from risk scoring.
+Category: baseline_interpretation. Risk tier: ALL.
+
+Rolling z-score computation uses an exclusive lookback window: for window index i, the baseline is computed from windows i-10 through i-1 (10 windows). The current window is not included in its own baseline. This ensures that an acute deterioration does not immediately update the baseline and mask its own z-score. The baseline adapts to chronic state changes over time while remaining sensitive to acute shifts.
+Category: baseline_interpretation. Risk tier: ALL.
+
+Gestational age is the strongest predictor of baseline HRV values. A 26-week neonate will show RMSSD values in the range 5-9ms, SDNN 8-14ms, and LF/HF ratio 1.5-2.2. A 34-week neonate will show RMSSD 15-25ms, SDNN 22-35ms, and LF/HF 1.0-1.5. Applying a 34-week alert threshold to a 26-week patient will generate false positives. Personalised baselines implicitly correct for gestational age by measuring each patient against their own history.
+Category: baseline_interpretation. Risk tier: ALL.
+
+Post-procedure baseline disruption occurs when procedures (e.g., endotracheal suctioning, lumbar puncture, blood draw) acutely alter HRV for 15-30 minutes. These procedure-related HRV transients will enter the rolling baseline window and shift it transiently toward the patient's post-procedure state. If a procedure is documented, the baseline windows covering the 30 minutes post-procedure should be treated with caution in z-score interpretation.
+Category: baseline_interpretation. Risk tier: ALL.
+
+Baseline drift over days or weeks in a premature neonate reflects normal neurodevelopmental maturation. RMSSD and SDNN increase as gestational age advances. The personalised rolling baseline naturally tracks this maturation — the baseline mean rises gradually, preventing false-positive z-scores from a maturational RMSSD increase. This is a key advantage over fixed population thresholds, which would generate false negatives as the infant matures.
+Category: baseline_interpretation. Risk tier: ALL.
+
+A standard deviation of zero in the rolling baseline window indicates that all 10 preceding windows have identical values for that feature. This is physiologically implausible and indicates a data quality issue (e.g., signal loss, saturated measurement, or integer rounding). The z-score computation should return 0.0 (neutral) in this case rather than dividing by zero. The run_nb04.py implementation handles this with an explicit guard: if roll_std == 0, deviation = 0.0.
+Category: baseline_interpretation. Risk tier: ALL.
+
+Interpreting z-scores for LF/HF ratio requires understanding that LF/HF is already a ratio. A doubling of LF/HF from a personal baseline of 1.5 to 3.0 represents a z-score of approximately +2.5 standard deviations — the same clinical significance as a halving of RMSSD. The z-score framework normalises both additive and multiplicative changes into a common deviation scale.
+Category: baseline_interpretation. Risk tier: ALL.
+
+Concurrent z-score deviations across multiple features are more clinically significant than any single-feature deviation. Two features deviating by -2.0 standard deviations simultaneously is more concerning than one feature deviating by -3.0. The autonomic nervous system dysregulation that precedes sepsis affects multiple HRV dimensions simultaneously, so multi-feature deviation is a higher-specificity pattern than isolated feature deviation.
+Category: baseline_interpretation. Risk tier: ALL.
+
+Baseline interpretation requires awareness of sleep state. Active sleep in premature neonates is associated with lower RMSSD and higher LF/HF ratio compared to quiet sleep. Without sleep state information, a z-score during active sleep may appear as a mild deviation when it is actually normal for that state. In clinical practice, sustained deviations persisting across sleep state transitions are more reliable indicators than single-window deviations.
+Category: baseline_interpretation. Risk tier: ALL.
