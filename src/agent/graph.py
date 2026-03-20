@@ -66,6 +66,12 @@ def _build_groq_client():
 # so setting EVAL_NO_LLM after import works correctly in programmatic tests.
 _GROQ = None if _is_eval_mode() else _build_groq_client()
 
+# ClinicalKnowledgeBase singleton — initialised once on first retrieve_context_node call.
+# On-disk Qdrant uses an exclusive file lock; recreating the client on every invoke()
+# triggers "Storage folder already accessed" when 24 scenarios run in a tight loop.
+# Caching also avoids reloading the 90 MB SentenceTransformer model on each call.
+_KB: ClinicalKnowledgeBase | None = None
+
 
 def _get_groq():
     """Return the Groq client, initialising lazily if the module was first imported
@@ -74,6 +80,21 @@ def _get_groq():
     if _GROQ is None:
         _GROQ = _build_groq_client()
     return _GROQ
+
+
+def _get_kb() -> ClinicalKnowledgeBase:
+    """Return the ClinicalKnowledgeBase singleton, initialising on first call.
+
+    Singleton avoids reloading the 90 MB SentenceTransformer + reopening the
+    on-disk Qdrant file lock on every retrieve_context_node invocation.
+    QDRANT_PATH is read once at first call; subsequent calls reuse the same client.
+    """
+    global _KB
+    if _KB is None:
+        _KB = ClinicalKnowledgeBase(
+            path=os.getenv("QDRANT_PATH", str(REPO_ROOT / "qdrant_local"))
+        )
+    return _KB
 
 
 class AgentState(TypedDict):
@@ -137,11 +158,10 @@ def retrieve_context_node(state: AgentState) -> dict:
 
     Uses the on-disk Qdrant store at qdrant_local/ by default.
     Override with QDRANT_PATH env var for Docker/remote Qdrant.
+    The KB singleton (_get_kb) is initialised once per process to avoid
+    reloading the SentenceTransformer model and reopening the Qdrant file lock.
     """
-    kb = ClinicalKnowledgeBase(
-        path=os.getenv("QDRANT_PATH", str(REPO_ROOT / "qdrant_local"))
-    )
-    context = kb.query(
+    context = _get_kb().query(
         state["rag_query"],
         n=3,
         risk_tier=state["pipeline_result"].risk_level,
