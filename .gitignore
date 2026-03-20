@@ -16,3 +16,9 @@ env/
 # Data/output (adjust if you commit processed data)
 *.log
 logs/
+
+# Eval results (generated outputs — not committed)
+results/
+
+# Qdrant on-disk runtime lock (do not commit)
+qdrant_local/.lock
