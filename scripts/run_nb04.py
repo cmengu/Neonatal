@@ -26,8 +26,8 @@ STEP_SIZE = 25
 LOOKBACK = 10
 FS_ECG = 500
 HRV_COLS = [
-    "rr_ms_mean", "rr_ms_std", "rr_ms_min",
-    "rr_ms_max", "rr_ms_25%", "rr_ms_50%", "rr_ms_75%"
+    "mean_rr", "sdnn", "rmssd", "pnn50", "lf_hf_ratio",
+    "rr_ms_min", "rr_ms_max", "rr_ms_25%", "rr_ms_50%", "rr_ms_75%"
 ]
 
 frp_df = pd.read_csv(PROCESSED_DIR / "first_r_peaks.csv")
