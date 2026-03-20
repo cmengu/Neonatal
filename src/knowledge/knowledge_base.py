@@ -125,3 +125,37 @@ class ClinicalKnowledgeBase:
         # flashrank>=0.2.x rerank() returns plain dicts, not PassageResult objects.
         # Use r["text"] — not r.text. Verified against flashrank==0.2.10.
         return [r["text"] for r in reranked[:n]]
+
+    def query_vector_only(
+        self,
+        text: str,
+        n: int = 3,
+        risk_tier: str | None = None,
+    ) -> list[str]:
+        """Dense-only retrieval — no sparse vectors, no cross-encoder reranking.
+
+        Used in eval/eval_retrieval.py as the vector-baseline to measure the
+        MRR@3 improvement from hybrid RRF + FlashRank reranking.
+        """
+        dense_vec = self.dense_model.encode(text).tolist()
+
+        filt = None
+        if risk_tier:
+            filt = Filter(
+                must=[
+                    FieldCondition(
+                        key="risk_tier",
+                        match=MatchValue(value=risk_tier),
+                    )
+                ]
+            )
+
+        results = self.client.query_points(
+            collection_name="clinical_knowledge",
+            query=dense_vec,
+            using="dense",
+            query_filter=filt,
+            limit=n,
+            with_payload=True,
+        )
+        return [r.payload["text"] for r in results.points]
