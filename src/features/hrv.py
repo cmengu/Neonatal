@@ -1,69 +1,132 @@
-# src/features/hrv.py
 """
-HRV (heart rate variability) feature encoding for neonatal sepsis pipeline.
+HRV feature extraction for neonatal sepsis pipeline.
 
-Adapted from acampillos/sepsis-prediction preprocessing/util.py.
-Input: 1D numpy array of RR intervals (ms). Output: flat dict of statistical features.
+Computes time-domain and frequency-domain HRV metrics from windowed RR intervals.
+Time-domain:       mean_rr, sdnn, rmssd, pnn50
+Frequency-domain:  lf_hf_ratio  (Welch PSD, LF 0.04–0.15 Hz / HF 0.15–0.40 Hz)
+Statistical:       rr_ms_min, rr_ms_max, rr_ms_25%, rr_ms_50%, rr_ms_75%
 """
-import pandas as pd
 import numpy as np
+from scipy import signal, interpolate
+from scipy.integrate import trapezoid as _trapz  # np.trapz removed in NumPy 2.0
 
 
-def get_serie_describe(rr_intervals):
+def _compute_lf_hf(rr_ms: np.ndarray, fs_resample: float = 4.0) -> float:
     """
-    Encode a window of RR intervals as statistical features.
+    Compute LF/HF power ratio from RR intervals (ms).
 
-    Takes a 1D numpy array of RR intervals (ms), wraps in DataFrame,
-    computes describe() stats, and returns a flat dictionary keyed as
-    'rr_ms_mean', 'rr_ms_std', etc. Adapted from acampillos/sepsis-prediction.
+    Resamples the RR series onto a uniform 4 Hz grid using linear interpolation,
+    then estimates PSD via Welch's method and integrates over LF and HF bands.
+    Returns 1.0 (neutral) for windows too short for reliable estimation (< 20 beats).
 
     Parameters
     ----------
-    rr_intervals : np.ndarray
-        1D array of RR intervals in milliseconds (ectopic beats already removed).
+    rr_ms : np.ndarray
+        1D array of RR intervals in milliseconds.
+    fs_resample : float
+        Target uniform sampling frequency in Hz (default 4 Hz per HRV guidelines).
 
     Returns
     -------
-    dict
-        Flat dictionary: 'rr_ms_mean', 'rr_ms_std', 'rr_ms_min', 'rr_ms_max',
-        'rr_ms_25%', 'rr_ms_50%', 'rr_ms_75%'
+    float
+        LF power / HF power ratio. Returns 1.0 if window is too short.
+    """
+    rr = np.asarray(rr_ms, dtype=np.float64)
+    if len(rr) < 20:
+        return 1.0
+
+    # Build cumulative time axis (seconds), starting at t=0 for the first beat
+    t_rr = np.cumsum(rr / 1000.0)
+    t_rr = np.insert(t_rr, 0, 0.0)[:-1]
+
+    # Uniform time grid at fs_resample Hz
+    t_uniform = np.arange(t_rr[0], t_rr[-1], 1.0 / fs_resample)
+    if len(t_uniform) < 16:
+        return 1.0
+
+    f_interp = interpolate.interp1d(
+        t_rr, rr, kind="linear", bounds_error=False, fill_value="extrapolate"
+    )
+    rr_uniform = f_interp(t_uniform)
+    rr_uniform = rr_uniform - rr_uniform.mean()  # remove DC offset before Welch
+
+    nperseg = min(len(rr_uniform), 256)
+    freqs, psd = signal.welch(rr_uniform, fs=fs_resample, nperseg=nperseg)
+
+    lf_mask = (freqs >= 0.04) & (freqs < 0.15)
+    hf_mask = (freqs >= 0.15) & (freqs < 0.40)
+
+    lf_power = float(_trapz(psd[lf_mask], freqs[lf_mask])) if lf_mask.any() else 0.0
+    hf_power = float(_trapz(psd[hf_mask], freqs[hf_mask])) if hf_mask.any() else 0.0
+
+    return float(lf_power / max(hf_power, 1e-9))
+
+
+def compute_hrv_features(rr_ms: np.ndarray) -> dict:
+    """
+    Compute all HRV features from a 1D array of RR intervals (ms).
+
+    Returns a flat dict with keys:
+      mean_rr, sdnn, rmssd, pnn50, lf_hf_ratio,
+      rr_ms_min, rr_ms_max, rr_ms_25%, rr_ms_50%, rr_ms_75%
+
+    Parameters
+    ----------
+    rr_ms : np.ndarray
+        1D array of RR intervals in milliseconds. Must be non-empty.
 
     Raises
     ------
     ValueError
-        If rr_intervals is empty (caller must ensure len > 0).
+        If rr_ms is empty.
     """
-    if len(rr_intervals) == 0:
-        raise ValueError("rr_intervals cannot be empty")
-    serie = pd.DataFrame({"rr_ms": rr_intervals})
-    serie_describe = serie.describe().transpose().drop(columns=["count"])
+    rr = np.asarray(rr_ms, dtype=np.float64)
+    n = len(rr)
+    if n == 0:
+        raise ValueError("rr_ms cannot be empty")
 
-    values = dict()
-    for index, row in serie_describe.iterrows():
-        for col in row.index:
-            values[f"{index}_{col}"] = row[col]
-    return values
+    mean_rr = float(np.mean(rr))
+    sdnn    = float(np.std(rr, ddof=1)) if n > 1 else 0.0
+    rmssd   = float(np.sqrt(np.mean(np.diff(rr) ** 2))) if n > 1 else 0.0
+    pnn50   = float(np.sum(np.abs(np.diff(rr)) > 50) / max(n - 1, 1) * 100) if n > 1 else 0.0
+    lf_hf   = _compute_lf_hf(rr)
+
+    return {
+        "mean_rr":     mean_rr,
+        "sdnn":        sdnn,
+        "rmssd":       rmssd,
+        "pnn50":       pnn50,
+        "lf_hf_ratio": lf_hf,
+        "rr_ms_min":   float(np.min(rr)),
+        "rr_ms_max":   float(np.max(rr)),
+        "rr_ms_25%":   float(np.percentile(rr, 25)),
+        "rr_ms_50%":   float(np.percentile(rr, 50)),
+        "rr_ms_75%":   float(np.percentile(rr, 75)),
+    }
 
 
-def get_window_features(rr_intervals, record_name, window_idx):
+def get_window_features(rr_intervals: np.ndarray, record_name: str, window_idx: int) -> dict:
     """
     Encode a window of RR intervals with record metadata for feature matrix rows.
+
+    Signature is intentionally unchanged from the original implementation so that
+    run_nb03.py requires no import update.
 
     Parameters
     ----------
     rr_intervals : np.ndarray
         1D array of RR intervals in milliseconds for this window.
     record_name : str
-        Infant record identifier (e.g. 'simulated_1', 'infant1').
+        Infant record identifier (e.g. 'infant1').
     window_idx : int
-        Index of the window within the recording.
+        Index of this window within the recording.
 
     Returns
     -------
     dict
-        Feature dictionary with record_name, window_idx, plus statistical features.
+        Feature dict with record_name, window_idx, plus all keys from compute_hrv_features().
     """
-    features = get_serie_describe(rr_intervals)
+    features = compute_hrv_features(rr_intervals)
     features["record_name"] = record_name
-    features["window_idx"] = window_idx
+    features["window_idx"]  = window_idx
     return features
