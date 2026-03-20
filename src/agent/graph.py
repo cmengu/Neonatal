@@ -13,7 +13,6 @@ Key design decisions:
 - All six node functions are decorated with @traceable for LangSmith observability.
 """
 import os
-import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Literal, Optional, TypedDict
@@ -26,7 +25,6 @@ from langsmith import traceable
 from pydantic import BaseModel
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(REPO_ROOT))
 
 from src.agent.memory import EpisodicMemory, PastAlert
 from src.agent.schemas import LLMOutput, NeonatalAlert
@@ -69,6 +67,15 @@ def _build_groq_client():
 _GROQ = None if _is_eval_mode() else _build_groq_client()
 
 
+def _get_groq():
+    """Return the Groq client, initialising lazily if the module was first imported
+    in eval mode and is now being used in live mode within the same process."""
+    global _GROQ
+    if _GROQ is None:
+        _GROQ = _build_groq_client()
+    return _GROQ
+
+
 class AgentState(TypedDict):
     patient_id: str
     pipeline_result: Optional[PipelineResult]
@@ -96,7 +103,12 @@ def run_pipeline_node(state: AgentState) -> dict:
     synthetic = os.environ.get("_SYNTHETIC_RESULT")
     if synthetic:
         import pickle
-        result = pickle.loads(bytes.fromhex(synthetic))
+        try:
+            result = pickle.loads(bytes.fromhex(synthetic))
+        except (ValueError, Exception) as exc:
+            raise RuntimeError(
+                f"_SYNTHETIC_RESULT could not be deserialised: {exc}"
+            ) from exc
     else:
         result = NeonatalPipeline().run(state["patient_id"])
 
@@ -195,7 +207,7 @@ Retrieved clinical context:
 
 Generate a structured neonatal clinical alert. Be specific about which HRV values are abnormal and why. Recommended actions must follow standard NICU protocols."""
 
-    output: LLMOutput = _GROQ.chat.completions.create(
+    output: LLMOutput = _get_groq().chat.completions.create(
         model="llama-3.3-70b-versatile",
         response_model=LLMOutput,
         messages=[{"role": "user", "content": prompt}],
@@ -228,7 +240,7 @@ def self_check_node(state: AgentState) -> dict:
         out.clinical_reasoning += " [OVERRIDDEN: rule-based RED threshold triggered]"
 
     if (not _is_eval_mode()) and (out.confidence < 0.7 or out.concern_level == "YELLOW"):
-        v: Verify = _GROQ.chat.completions.create(
+        v: Verify = _get_groq().chat.completions.create(
             model="llama-3.3-70b-versatile",
             response_model=Verify,
             messages=[

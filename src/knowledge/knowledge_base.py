@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import os
 import pickle
-import sys
 from pathlib import Path
 
 from flashrank import Ranker, RerankRequest
@@ -34,7 +33,6 @@ from qdrant_client.models import (
 from sentence_transformers import SentenceTransformer
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(REPO_ROOT))
 
 
 class ClinicalKnowledgeBase:
