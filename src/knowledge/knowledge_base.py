@@ -95,4 +95,5 @@ class ClinicalKnowledgeBase:
         reranked = self.reranker.rerank(
             RerankRequest(query=text, passages=candidates)
         )
-        return [r.text for r in reranked[:n]]
+        # FlashRank returns dict-like objects; access text via ["text"] or .get()
+        return [r.get("text", r) if isinstance(r, dict) else r.text for r in reranked[:n]]
