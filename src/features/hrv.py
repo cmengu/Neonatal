@@ -5,6 +5,9 @@ Computes time-domain and frequency-domain HRV metrics from windowed RR intervals
 Time-domain:       mean_rr, sdnn, rmssd, pnn50
 Frequency-domain:  lf_hf_ratio  (Welch PSD, LF 0.04–0.15 Hz / HF 0.15–0.40 Hz)
 Statistical:       rr_ms_min, rr_ms_max, rr_ms_25%, rr_ms_50%, rr_ms_75%
+
+The authoritative ordered column name list is in ``src.features.constants.HRV_FEATURE_COLS``.
+The keys returned by ``compute_hrv_features()`` must stay in sync with that list.
 """
 import numpy as np
 from scipy import signal, interpolate
@@ -44,8 +47,13 @@ def _compute_lf_hf(rr_ms: np.ndarray, fs_resample: float = 4.0) -> float:
     if len(t_uniform) < 16:
         return 1.0
 
+    # Clamp to edge values instead of extrapolating — t_uniform ends at t_rr[-1]
+    # (exclusive via np.arange) so out-of-bounds is rare, but linear extrapolation
+    # on a non-monotone RR signal could produce negative values at the boundary.
+    # Note: t_uniform stops at t_rr[-1] (start of last beat), so the last rr[-1] ms
+    # of signal are not interpolated — a ~2% loss for a 50-beat window at 400 ms avg.
     f_interp = interpolate.interp1d(
-        t_rr, rr, kind="linear", bounds_error=False, fill_value="extrapolate"
+        t_rr, rr, kind="linear", bounds_error=False, fill_value=(rr[0], rr[-1])
     )
     rr_uniform = f_interp(t_uniform)
     rr_uniform = rr_uniform - rr_uniform.mean()  # remove DC offset before Welch

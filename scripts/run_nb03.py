@@ -19,6 +19,7 @@ if REPO_ROOT.name == "notebooks":
 
 sys.path.insert(0, str(REPO_ROOT))
 from src.features.hrv import get_window_features
+from src.features.constants import HRV_FEATURE_COLS
 
 import wfdb
 import pandas as pd
@@ -51,11 +52,7 @@ def extract_features(patient_id):
         win_idx += 1
 
     df = pd.DataFrame(rows)
-    expected_cols = [
-        "record_name", "window_idx",
-        "mean_rr", "sdnn", "rmssd", "pnn50", "lf_hf_ratio",
-        "rr_ms_min", "rr_ms_max", "rr_ms_25%", "rr_ms_50%", "rr_ms_75%"
-    ]
+    expected_cols = ["record_name", "window_idx"] + HRV_FEATURE_COLS
     missing = [c for c in expected_cols if c not in df.columns]
     assert not missing, f"Missing columns: {missing}"
     return df[expected_cols]

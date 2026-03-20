@@ -12,6 +12,7 @@ import logging
 from pathlib import Path
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
 
+import sys
 import numpy as np
 import pandas as pd
 
@@ -19,16 +20,16 @@ REPO_ROOT = Path(os.getcwd())
 if REPO_ROOT.name == "notebooks":
     REPO_ROOT = REPO_ROOT.parent
 
+sys.path.insert(0, str(REPO_ROOT))
+from src.features.constants import HRV_FEATURE_COLS
+
 PROCESSED_DIR = REPO_ROOT / "data" / "processed"
 PATIENTS = [f"infant{i}" for i in range(1, 11)]
 WINDOW_SIZE = 50
 STEP_SIZE = 25
 LOOKBACK = 10
 FS_ECG = 500
-HRV_COLS = [
-    "mean_rr", "sdnn", "rmssd", "pnn50", "lf_hf_ratio",
-    "rr_ms_min", "rr_ms_max", "rr_ms_25%", "rr_ms_50%", "rr_ms_75%"
-]
+HRV_COLS = HRV_FEATURE_COLS
 
 frp_df = pd.read_csv(PROCESSED_DIR / "first_r_peaks.csv")
 missing = [p for p in PATIENTS if p not in frp_df["record_name"].values]

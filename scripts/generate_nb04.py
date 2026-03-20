@@ -32,10 +32,8 @@ STEP_SIZE   = 25    # beats — must match NB03
 LOOKBACK    = 10    # windows for rolling baseline
 FS_ECG      = 500   # Hz
 
-HRV_COLS = [
-    "mean_rr", "sdnn", "rmssd", "pnn50", "lf_hf_ratio",
-    "rr_ms_min", "rr_ms_max", "rr_ms_25%", "rr_ms_50%", "rr_ms_75%"
-]
+# Single source of truth — keeps notebook in sync with the scripts automatically
+from src.features.constants import HRV_FEATURE_COLS as HRV_COLS
 
 # Load first R-peak positions — written by scripts/run_nb02_real.py (anchors cumulative_pos)
 frp_df         = pd.read_csv(PROCESSED_DIR / "first_r_peaks.csv")
@@ -211,7 +209,7 @@ for idx, patient_id in enumerate(PATIENTS):
     ax.set_ylabel("mean_rr_dev", fontsize=7)
     ax.axhline(0, color="grey", linestyle="--", linewidth=0.5)
 
-plt.suptitle("RR Mean Deviation with Bradycardia Events (red) — first_r_peak_abs alignment", fontsize=11)
+plt.suptitle("mean_rr Deviation with Bradycardia Events (red) — first_r_peak_abs alignment", fontsize=11)
 plt.tight_layout()
 plt.show()"""
 
