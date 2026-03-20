@@ -33,8 +33,8 @@ LOOKBACK    = 10    # windows for rolling baseline
 FS_ECG      = 500   # Hz
 
 HRV_COLS = [
-    "rr_ms_mean", "rr_ms_std", "rr_ms_min",
-    "rr_ms_max", "rr_ms_25%", "rr_ms_50%", "rr_ms_75%"
+    "mean_rr", "sdnn", "rmssd", "pnn50", "lf_hf_ratio",
+    "rr_ms_min", "rr_ms_max", "rr_ms_25%", "rr_ms_50%", "rr_ms_75%"
 ]
 
 # Load first R-peak positions — written by scripts/run_nb02_real.py (anchors cumulative_pos)
@@ -202,13 +202,13 @@ axes = axes.flatten()
 for idx, patient_id in enumerate(PATIENTS):
     df  = pd.read_csv(PROCESSED_DIR / f"{patient_id}_windowed.csv")
     ax  = axes[idx]
-    ax.plot(df["window_idx"], df["rr_ms_mean_dev"], linewidth=0.8, color="steelblue")
+    ax.plot(df["window_idx"], df["mean_rr_dev"], linewidth=0.8, color="steelblue")
     pos = df[df["label"] == 1]
-    ax.scatter(pos["window_idx"], pos["rr_ms_mean_dev"],
+    ax.scatter(pos["window_idx"], pos["mean_rr_dev"],
                color="red", s=30, zorder=5, label="bradycardia")
     ax.set_title(f"{patient_id} (n={len(df)}, pos={len(pos)})", fontsize=9)
     ax.set_xlabel("window_idx", fontsize=7)
-    ax.set_ylabel("rr_ms_mean_dev", fontsize=7)
+    ax.set_ylabel("mean_rr_dev", fontsize=7)
     ax.axhline(0, color="grey", linestyle="--", linewidth=0.5)
 
 plt.suptitle("RR Mean Deviation with Bradycardia Events (red) — first_r_peak_abs alignment", fontsize=11)
