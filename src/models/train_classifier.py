@@ -33,7 +33,13 @@ from sklearn.metrics import average_precision_score, roc_auc_score
 from sklearn.utils.class_weight import compute_sample_weight
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(REPO_ROOT))
+
+# Ensure repo root is on sys.path so `src.*` imports work when this file is
+# executed as a script (python src/models/train_classifier.py from repo root).
+# The guard prevents duplicate insertion on repeated imports.
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from src.features.constants import HRV_FEATURE_COLS
 
 logging.basicConfig(
@@ -88,12 +94,25 @@ def train() -> tuple:
     train_dfs, test_dfs = [], []
     for patient_id, patient_df in df.groupby("record_name"):
         patient_df = patient_df.sort_values("window_idx")
-        cutoff = int(len(patient_df) * 0.8)
+        # max(1, ...) guarantees at least one train row per patient even for very
+        # short recordings (< 5 windows), preventing an all-test split.
+        cutoff = max(1, int(len(patient_df) * 0.8))
         train_dfs.append(patient_df.iloc[:cutoff])
         test_dfs.append(patient_df.iloc[cutoff:])
 
     train_df = pd.concat(train_dfs).reset_index(drop=True)
     test_df  = pd.concat(test_dfs).reset_index(drop=True)
+
+    # FIX-1: Assert feature column order matches HRV_FEATURE_COLS before fitting.
+    # ONNX inference uses positional columns — silent order drift produces wrong predictions.
+    actual_cols = train_df[HRV_FEATURE_COLS].columns.tolist()
+    assert actual_cols == list(HRV_FEATURE_COLS), (
+        f"Column order mismatch between HRV_FEATURE_COLS and CSV.\n"
+        f"  Expected: {list(HRV_FEATURE_COLS)}\n"
+        f"  Got:      {actual_cols}\n"
+        f"  The ONNX model uses positional features — order must be identical."
+    )
+    logging.info("FIX-1: Feature order verified: %s", actual_cols)
 
     X_train = train_df[HRV_FEATURE_COLS].values.astype(np.float32)
     y_train = train_df[LABEL_COL].values
