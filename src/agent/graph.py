@@ -338,3 +338,10 @@ def build_graph():
 
 
 agent = build_graph()
+
+# Phase 5: multi-agent graph — supervisor routing through four specialist nodes.
+# Imported by eval_agent.py via: from src.agent.graph import multi_agent
+# The generalist `agent` above is kept unchanged for Phase 4/6 baseline comparison.
+from src.agent.supervisor import build_multi_agent_graph
+
+multi_agent = build_multi_agent_graph()
