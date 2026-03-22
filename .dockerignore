@@ -1,0 +1,12 @@
+.git
+.env
+__pycache__/
+*.pyc
+*.pyo
+qdrant_local/
+data/raw/
+notebooks/
+*.ipynb
+models/exports/signal_specialist_lora/
+wget-log
+results/
