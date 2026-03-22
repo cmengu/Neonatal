@@ -83,3 +83,64 @@ class NeonatalAlert(BaseModel):
     protocol_compliant: bool
     past_similar_events: int
     latency_ms: float | None = None
+
+
+class SignalAssessment(BaseModel):
+    """Structured output of the Signal Interpretation specialist.
+
+    autonomic_pattern: Physiological classification of the HRV z-score pattern.
+    primary_features:  Which HRV features drove the classification.
+    confidence:        0.0–1.0 specialist confidence.
+    physiological_reasoning: At least 30 chars of reasoning.
+    """
+
+    autonomic_pattern: Literal[
+        "pre_sepsis",
+        "bradycardia_reflex",
+        "normal_variation",
+        "indeterminate",
+    ]
+    primary_features: list[str]
+    confidence: float
+    physiological_reasoning: str
+
+    @field_validator("confidence")
+    @classmethod
+    def confidence_range(cls, v: float) -> float:
+        if not 0.0 <= v <= 1.0:
+            raise ValueError(f"confidence {v} out of range [0, 1]")
+        return v
+
+    @field_validator("primary_features")
+    @classmethod
+    def at_least_one(cls, v: list[str]) -> list[str]:
+        if not v:
+            raise ValueError("primary_features must contain at least one feature")
+        return v[:3]
+
+    @field_validator("physiological_reasoning")
+    @classmethod
+    def reasoning_substantive(cls, v: str) -> str:
+        if len(v.strip()) < 30:
+            raise ValueError("physiological_reasoning too short — LLM may have failed")
+        return v
+
+
+class BradycardiaAssessment(BaseModel):
+    """Structured output of the Bradycardia Classification specialist.
+
+    classification: Clinical category of the bradycardia pattern.
+    clinical_weight: Low/medium/high importance relative to HRV findings.
+    reasoning: Free-text clinical reasoning.
+    """
+
+    classification: Literal[
+        "isolated_reflex",
+        "recurrent_without_suppression",
+        "recurrent_with_suppression",
+        "cluster",
+        "apnoeic",
+        "none",
+    ]
+    clinical_weight: Literal["low", "medium", "high"]
+    reasoning: str
