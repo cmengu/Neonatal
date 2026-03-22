@@ -61,7 +61,7 @@ def _rule_based_signal(risk_score: float, max_z: float) -> SignalAssessment:
 
 
 @traceable(name="signal_agent_node")
-def signal_agent_node(state: "MultiAgentState") -> dict:
+def signal_agent_node(state: dict) -> dict:
     """Classify autonomic pattern from HRV z-scores. Always runs first."""
     r = state["pipeline_result"]
     z_vals = [abs(z) for z in r.z_scores.values()]

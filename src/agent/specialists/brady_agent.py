@@ -53,7 +53,7 @@ def _rule_based_brady(n_events: int) -> BradycardiaAssessment:
 
 
 @traceable(name="brady_agent_node")
-def brady_agent_node(state: "MultiAgentState") -> dict:
+def brady_agent_node(state: dict) -> dict:
     """Classify bradycardia event pattern. Runs only when events present or max_z > 2.0."""
     r = state["pipeline_result"]
     n_events = len(r.detected_events)

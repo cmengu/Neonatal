@@ -46,7 +46,7 @@ class MultiAgentState(TypedDict):
 
 
 @traceable(name="supervisor_node")
-def supervisor_node(state: MultiAgentState) -> dict:
+def supervisor_node(state: dict) -> dict:
     """Run the ONNX pipeline and determine specialist routing.
 
     Sets run_brady=True if bradycardia events present OR any z-score abs > 2.0.
@@ -75,13 +75,13 @@ def supervisor_node(state: MultiAgentState) -> dict:
     }
 
 
-def _route_brady(state: MultiAgentState) -> str:
+def _route_brady(state: dict) -> str:
     """Conditional edge: route to brady specialist or skip directly to clinical."""
     return "brady" if state.get("run_brady") else "clinical"
 
 
 @traceable(name="assemble_multi_node")
-def assemble_multi_node(state: MultiAgentState) -> dict:
+def assemble_multi_node(state: dict) -> dict:
     """Assemble the final NeonatalAlert and persist with specialist outputs to audit.db."""
     result = state["pipeline_result"]
     llm_out = state["llm_output"]

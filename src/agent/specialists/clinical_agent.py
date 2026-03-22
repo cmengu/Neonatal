@@ -28,7 +28,7 @@ _CLINICAL_CATEGORIES = ["intervention_thresholds", "baseline_interpretation"]
 
 
 @traceable(name="clinical_agent_node")
-def clinical_agent_node(state: "MultiAgentState") -> dict:
+def clinical_agent_node(state: dict) -> dict:
     """Synthesise specialist findings into a structured clinical alert."""
     r = state["pipeline_result"]
 

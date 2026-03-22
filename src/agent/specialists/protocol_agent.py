@@ -38,7 +38,7 @@ _ROUTINE_ACTIONS = {
 
 
 @traceable(name="protocol_agent_node")
-def protocol_agent_node(state: "MultiAgentState") -> dict:
+def protocol_agent_node(state: dict) -> dict:
     """Validate recommended_action against concern_level. Pure logic — no LLM."""
     out = state["llm_output"]
     if out is None:
