@@ -72,7 +72,7 @@ def load_agent(name: str):
 
 
 def run_eval(run_agent) -> dict:
-    """Run all 24 scenarios and collect predictions + latencies."""
+    """Run all 30 scenarios and collect predictions + latencies."""
     y_true:         list[str]   = []
     y_pred:         list[str]   = []
     protocol_flags: list[bool]  = []
@@ -127,6 +127,12 @@ def run_eval(run_agent) -> dict:
     missed = sum(1 for t, p in zip(y_true, y_pred) if t == "RED" and p != "RED")
     fnr    = missed / n_red if n_red > 0 else 0.0
 
+    # FNR (RED, hard scenarios only) — Phase 5 improvement target
+    hard_pairs = [(t, p) for s, t, p in zip(SCENARIOS, y_true, y_pred) if "HARD" in s.patient_id]
+    n_hard_red = sum(1 for t, _ in hard_pairs if t == "RED")
+    missed_hard_red = sum(1 for t, p in hard_pairs if t == "RED" and p != "RED")
+    fnr_hard = missed_hard_red / n_hard_red if n_hard_red > 0 else 0.0
+
     protocol  = sum(protocol_flags) / len(protocol_flags)
     lat_arr   = sorted(latencies_ms)
     p50       = float(np.percentile(lat_arr, 50)) if lat_arr else 0.0
@@ -138,6 +144,7 @@ def run_eval(run_agent) -> dict:
         "n_correct":           n_correct,
         "f1":                  f1,
         "fnr_red":             fnr,
+        "fnr_hard":            fnr_hard,
         "protocol_compliance": protocol,
         "latency_p50_ms":      p50,
         "latency_p95_ms":      p95,
@@ -161,6 +168,7 @@ def main() -> None:
     print("-" * 60)
     print(f"F1 (macro):          {results['f1']:.3f}")
     print(f"FNR (RED):           {results['fnr_red']:.3f}")
+    print(f"FNR (RED, hard):     {results['fnr_hard']:.3f}")
     print(f"Protocol compliance: {results['protocol_compliance'] * 100:.1f}%")
     print(f"Latency p50 / p95:   {results['latency_p50_ms']:.0f}ms / {results['latency_p95_ms']:.0f}ms")
     print(f"Correct:             {results['n_correct']}/{results['n_scenarios']}")
