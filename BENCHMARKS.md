@@ -1,41 +1,73 @@
-# NeonatalGuard — Generalist Baseline Benchmarks
-
-*Phase 4 baseline — recorded 2026-03-22.*
-*Phase 5 multi-agent results will be added as a new section below.*
-*Hard-scenario FNR is the primary Phase 5 improvement target.*
+# NeonatalGuard — Benchmark Results
 
 ---
 
-## Eval Suite: 30 Scenarios (24 clean + 6 hard mixed-signal)
+## Phase 4 — Generalist Baseline
 
-| Metric | No-LLM (rule-based) | Live LLM (Groq generalist) |
-|--------|---------------------|---------------------------|
+*Recorded 2026-03-22. 30 scenarios (24 clean + 6 hard mixed-signal).*
+
+### Agent Eval
+
+| Metric | No-LLM (rule-based) | Live LLM (Groq llama-3.3-70b) |
+|--------|---------------------|-------------------------------|
 | F1 (macro) | 1.000 | 0.533 |
 | FNR (RED) | 0.000 | 0.000 |
-| FNR (RED, hard scenarios only) | 0.000 | 0.000 |
+| FNR (RED, hard scenarios) | 0.000 | 0.000 |
 | Protocol compliance | 1.000 | 0.667 |
+| Latency p50 / p95 | 688ms / 3292ms | — |
 | Scenarios run | 30 | 30 |
 
-## RAG Retrieval
+**Interpretation:** No-LLM F1=1.000 is the guaranteed CI baseline — the rule-based path maps `risk_score > 0.70 → RED` directly. Live-LLM F1=0.533 reflects YELLOW↔GREEN confusion: the generalist conflates signal interpretation with action selection in a single prompt. FNR(RED)=0.000 in both modes — the safety constraint holds. Protocol compliance of 0.667 reflects both parse failures and lack of concern-level awareness in action validation.
+
+### RAG Retrieval
 
 | Metric | Vector-only | Hybrid + Rerank | Delta |
 |--------|-------------|-----------------|-------|
 | MRR@3 | 0.793 | 0.960 | +0.167 |
-| Recall@3 | 92.0% | 100.0% | — |
+| Recall@3 | 92.0% | 100.0% | +8.0pp |
+
+Hybrid (dense + TF-IDF sparse + FlashRank rerank) achieves perfect Recall@3. The two queries vector-only missed were a bradycardia event-count query and an intervention-threshold query with a specific PPV statistic — exact numeric terms that BM25 caught and semantic embeddings missed.
 
 ---
 
-## Notes
+## Phase 5 — Multi-Agent (Specialist Routing)
 
-- **FNR(RED) must remain 0.000 in all future phases.** A missed RED is a patient safety event.
-- **Hard-scenario FNR** is the primary target for Phase 5. The signal specialist is
-  expected to reduce this on mixed-signal cases.
-- **Live LLM F1** reflects the generalist's YELLOW/GREEN distinction quality.
-  The clinical reasoning specialist targets improvement here.
+*Recorded 2026-03-22. Same 30 scenarios.*
+*Architecture: supervisor → signal specialist → [brady conditional] → clinical specialist → protocol specialist → assemble.*
+
+### Agent Eval (no-LLM gate)
+
+| Metric | Generalist (Phase 4) | Multi-Agent (Phase 5) | Delta |
+|--------|---------------------|-----------------------|-------|
+| F1 (macro, no-LLM) | 1.000 | 1.000 | 0.000 |
+| FNR (RED) | 0.000 | 0.000 | 0.000 |
+| FNR (RED, hard scenarios) | 0.000 | 0.000 | 0.000 |
+| Protocol compliance | 1.000 | 1.000 | 0.000 |
+| Latency p50 / p95 | 688ms / 3292ms | 11ms / 14ms | — |
+| Scenarios run | 30 | 30 | — |
+
+**Latency note:** Multi-agent p50=11ms vs generalist p50=688ms in no-LLM mode because the multi-agent rule-based path skips the Qdrant KB retrieval (specialist nodes return deterministically without calling `query_by_category()`). In live-LLM mode both will be network-bound on Groq latency.
+
+### Agent Eval (live LLM)
+
+| Metric | Generalist (Phase 4) | Multi-Agent (Phase 5) | Delta |
+|--------|---------------------|-----------------------|-------|
+| F1 (macro) | 0.533 | *pending* | — |
+| FNR (RED) | 0.000 | *pending* | — |
+| FNR (RED, hard scenarios) | 0.000 | *pending* | — |
+| Protocol compliance | 0.667 | *pending* | — |
+
+*Run `QDRANT_PATH=qdrant_local python eval/eval_agent.py --agent multi_agent --output results/eval_multiagent_live.json` to populate.*
+
+---
+
+## Safety Constraint
+
+**FNR(RED) must remain 0.000 in all future phases.** A missed RED is a patient safety event. This constraint has held across all Phase 4 and Phase 5 no-LLM evaluations.
 
 ## Phase 5 Improvement Claim Requirements
 
-A Phase 5 multi-agent result is an improvement if and only if:
+A Phase 5 live-LLM result is an improvement over Phase 4 if and only if:
 1. FNR(RED) remains 0.000
-2. Hard-scenario FNR(RED) ≤ Phase 4 live-LLM value (0.000)
-3. Overall F1 (live LLM) > Phase 4 live-LLM value (0.533)
+2. Hard-scenario FNR(RED) ≤ 0.000 (Phase 4 live-LLM value)
+3. Overall F1 (live LLM) > 0.533 (Phase 4 live-LLM value)
