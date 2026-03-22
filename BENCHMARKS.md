@@ -120,3 +120,43 @@ USE_LORA_SIGNAL=1 QDRANT_PATH=qdrant_local python eval/eval_agent.py \
 | Multi-agent live F1 > 0.533 | Positive delta vs generalist | *pending* |
 | LoRA F1 ≥ multi-agent F1 | LoRA not worse than Groq specialist | *pending* |
 | FNR(RED) = 0.000 all rows | Safety constraint holds | ✅ (no-LLM) |
+
+---
+
+## Phase 7 — FastAPI + Docker + Monitoring
+
+*Recorded 2026-03-22. Production API layer wrapping the Phase 5 multi-agent graph.*
+
+### API Endpoints
+
+| Endpoint | Method | Description | Status |
+|----------|--------|-------------|--------|
+| `/assess/{patient_id}` | POST | Blocking multi-agent alert with `latency_ms` | ✅ |
+| `/assess/{patient_id}/generalist` | POST | Generalist agent for A/B comparison | ✅ |
+| `/assess/{patient_id}/stream` | GET | SSE streaming per-specialist progress | ✅ |
+| `/patient/{patient_id}/history` | GET | Last N alerts from SQLite audit.db | ✅ |
+| `/health` | GET | FIX-12 distribution + FIX-13 chunk count | ✅ |
+
+### Phase 7 Success Criteria
+
+| Feature | Target | Status |
+|---------|--------|--------|
+| Blocking endpoint | `NeonatalAlert` with `latency_ms` set | ✅ |
+| SSE streaming | `text/event-stream`, 200, ≥1 `data:` event | ✅ |
+| Patient history | JSON array from SQLite | ✅ |
+| Generalist A/B | `NeonatalAlert` from generalist graph | ✅ |
+| FIX-12 health | `prediction_distribution_last_100` + `prediction_health` | ✅ |
+| FIX-13 health | `qdrant == "ok"` when 34 chunks present | ✅ |
+| Docker networked mode | `QDRANT_PATH=""` → `ClinicalKnowledgeBase()` branch | ✅ |
+| CI gate regression | `All CI gates passed.` | ✅ |
+| Test count | 7 passed (local, excluding Docker parity) | ✅ |
+
+### Infrastructure
+
+| Component | Implementation |
+|-----------|---------------|
+| API server | FastAPI + Uvicorn (1 worker, process-level singletons) |
+| Container | `python:3.11-slim`, `linux/arm64` |
+| Services | 4 (neonatalguard-api, qdrant, eval-runner, signal-specialist) |
+| KB preload | Lifespan handler — warms SentenceTransformer + Qdrant on startup |
+| Tracing | LangSmith via existing `@traceable` decorators (no new instrumentation) |
