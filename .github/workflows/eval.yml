@@ -41,6 +41,9 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Run dependency API contract tests
+        run: pytest tests/test_dependency_apis.py -v
+
       - name: Run agent eval (no-LLM, CI gate)
         env:
           QDRANT_PATH: qdrant_local
@@ -70,6 +73,6 @@ jobs:
               body: [
                 '## NeonatalGuard Eval (no-LLM)',
                 `F1: ${r.f1.toFixed(3)} | FNR(RED): ${r.fnr_red.toFixed(3)} | Protocol: ${(r.protocol_compliance*100).toFixed(1)}%`,
-                `Correct: ${r.n_correct}/${r.n_scenarios} | Latency p50: ${Math.round(r.latency_p50_ms)}ms`
+                `Hard-scenario FNR: ${(r.fnr_hard ?? 0).toFixed(3)} | Correct: ${r.n_correct}/${r.n_scenarios} | Latency p50: ${Math.round(r.latency_p50_ms)}ms`
               ].join('\n')
             })
