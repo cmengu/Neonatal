@@ -1,4 +1,4 @@
-"""24-scenario eval suite for NeonatalGuard.
+"""30-scenario eval suite for NeonatalGuard.
 
 Each Scenario maps to a deterministic PipelineResult injected into the
 LangGraph agent via the _SYNTHETIC_RESULT env var mechanism in graph.py.
@@ -26,7 +26,7 @@ if str(REPO_ROOT) not in sys.path:
 from src.features.constants import HRV_FEATURE_COLS
 from src.pipeline.result import BradycardiaEvent, PipelineResult
 
-# Fixed 28-32wk premature neonate baseline used for all 24 scenarios.
+# Fixed 28-32wk premature neonate baseline used for all scenarios.
 # Scenario z_scores are deviations FROM these values.
 # Sources: Fyfe 2003, Longin 2005 — same as synthetic_generator.py.
 _BASELINE_MEANS: dict[str, float] = {
@@ -123,7 +123,40 @@ SCENARIOS: list[Scenario] = [
 ]
 # fmt: on
 
-assert len(SCENARIOS) == 24, f"Expected 24 scenarios, got {len(SCENARIOS)}"
-assert sum(1 for s in SCENARIOS if s.expected == "RED")    == 8
-assert sum(1 for s in SCENARIOS if s.expected == "YELLOW") == 8
-assert sum(1 for s in SCENARIOS if s.expected == "GREEN")  == 8
+# fmt: off
+SCENARIOS += [
+    # HARD scenarios (6) — mixed/contradictory signals, 2 per class.
+    # RED hard: risk_score > 0.70 so rule-based path returns RED in --no-llm mode.
+    Scenario("EVAL-HARD-RED-001", 0.75,
+             {"rmssd": -2.8, "lf_hf_ratio": +0.3, "pnn50": -2.5, "sdnn": -2.2},
+             0, "RED",
+             "RED — RMSSD+SDNN+pNN50 suppressed but LF/HF normal. No brady events."),
+    Scenario("EVAL-HARD-RED-002", 0.71,
+             {"rmssd": -1.2, "lf_hf_ratio": +3.1, "pnn50": -0.8, "sdnn": -0.6},
+             4, "RED",
+             "RED — dominant LF/HF shift with brady events, mild RMSSD change"),
+    # YELLOW hard: risk_score 0.41–0.69
+    Scenario("EVAL-HARD-YEL-001", 0.55,
+             {"rmssd": -2.1, "lf_hf_ratio": -0.4, "pnn50": -1.9, "sdnn": +0.3},
+             0, "YELLOW",
+             "YELLOW — RMSSD+pNN50 declining but LF/HF improving. Contradictory."),
+    Scenario("EVAL-HARD-YEL-002", 0.48,
+             {"rmssd": +0.2, "lf_hf_ratio": +2.4, "pnn50": +0.1, "sdnn": -0.3},
+             3, "YELLOW",
+             "YELLOW — isolated LF/HF elevation with brady, other HRV features normal"),
+    # GREEN hard: risk_score < 0.40
+    Scenario("EVAL-HARD-GRN-001", 0.35,
+             {"rmssd": -1.8, "lf_hf_ratio": +1.5, "pnn50": -1.6, "sdnn": -1.4},
+             0, "GREEN",
+             "GREEN — looks like YELLOW but risk_score low. Tests against false positives."),
+    Scenario("EVAL-HARD-GRN-002", 0.28,
+             {"rmssd": -0.9, "lf_hf_ratio": +0.8, "pnn50": +1.2, "sdnn": -0.7},
+             1, "GREEN",
+             "GREEN — mixed directions, single brady, low overall risk"),
+]
+# fmt: on
+
+assert len(SCENARIOS) == 30, f"Expected 30 scenarios, got {len(SCENARIOS)}"
+assert sum(1 for s in SCENARIOS if s.expected == "RED")    == 10
+assert sum(1 for s in SCENARIOS if s.expected == "YELLOW") == 10
+assert sum(1 for s in SCENARIOS if s.expected == "GREEN")  == 10
