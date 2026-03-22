@@ -70,7 +70,7 @@ def test_stream_returns_event_stream_content_type():
         # Consume at least one chunk to verify the SSE generator actually emits events.
         # A broken _STAGE_MAP (wrong node key names) would produce zero events here.
         chunks = list(r.iter_lines())
-        sse_data_lines = [c for c in chunks if c.startswith(b"data:")]
+        sse_data_lines = [c for c in chunks if c.startswith("data:")]
         assert len(sse_data_lines) > 0, (
             f"SSE generator emitted zero data: events — check _STAGE_MAP node keys match "
             f"build_multi_agent_graph() g.add_node() names. Got lines: {chunks[:5]}"
