@@ -26,6 +26,110 @@ if TYPE_CHECKING:
 
 _SIGNAL_CATEGORIES = ["hrv_indicators", "sepsis_early_warning"]
 
+# Module-level LoRA model singleton — loaded lazily on first call when USE_LORA_SIGNAL=1.
+# None until _get_lora_model() is first called; then cached for the process lifetime.
+_LORA_MODEL = None
+_LORA_TOKENIZER = None
+
+
+def _get_lora_model():
+    """Lazily load the fine-tuned Phi-3-mini + LoRA adapter.
+
+    Loads once per process; subsequent calls reuse the cached tuple.
+    Requires USE_LORA_SIGNAL=1 and models/exports/signal_specialist_lora/ to exist.
+    Device priority: MPS (Apple Silicon) → CPU.
+    """
+    global _LORA_MODEL, _LORA_TOKENIZER
+    if _LORA_MODEL is not None:
+        return _LORA_MODEL, _LORA_TOKENIZER
+
+    import torch
+    from pathlib import Path
+    from peft import PeftModel
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    REPO_ROOT   = Path(__file__).resolve().parent.parent.parent
+    ADAPTER_DIR = str(REPO_ROOT / "models" / "exports" / "signal_specialist_lora")
+    BASE_MODEL  = "microsoft/Phi-3-mini-4k-instruct"
+    DEVICE      = "mps" if torch.backends.mps.is_available() else "cpu"
+    DTYPE       = torch.float16
+
+    tokenizer = AutoTokenizer.from_pretrained(ADAPTER_DIR, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    base = AutoModelForCausalLM.from_pretrained(
+        BASE_MODEL, torch_dtype=DTYPE, trust_remote_code=True, device_map=DEVICE
+    )
+    model = PeftModel.from_pretrained(base, ADAPTER_DIR)
+    model.eval()
+
+    _LORA_MODEL, _LORA_TOKENIZER = model, tokenizer
+    return _LORA_MODEL, _LORA_TOKENIZER
+
+
+def _lora_signal_inference(r) -> "SignalAssessment":
+    """Run local LoRA adapter inference and parse output as SignalAssessment.
+
+    Falls back to _rule_based_signal() if JSON parsing fails — never crashes.
+
+    Parameters
+    ----------
+    r : PipelineResult — used for z-score input and rule-based fallback.
+    """
+    import json
+    import torch
+
+    instruction = (
+        "Classify the neonatal HRV autonomic pattern from these z-score deviations "
+        "from this infant's personal baseline. Do NOT recommend clinical actions."
+    )
+    z_parts = ", ".join(
+        f"{feat} z={r.z_scores.get(feat, 0.0):+.2f}"
+        for feat in r.z_scores
+    )
+    input_text = (
+        f"{z_parts}. "
+        f"Risk score {r.risk_score:.2f}. "
+        f"Bradycardia events: {len(r.detected_events)}."
+    )
+    prompt = (
+        f"### Instruction:\n{instruction}\n\n"
+        f"### Input:\n{input_text}\n\n"
+        f"### Output:\n"
+    )
+
+    model, tokenizer = _get_lora_model()
+    device = next(model.parameters()).device
+    inputs = tokenizer(prompt, return_tensors="pt").to(device)
+
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=256,
+            do_sample=False,
+            pad_token_id=tokenizer.pad_token_id,
+        )
+
+    decoded = tokenizer.decode(
+        outputs[0][inputs["input_ids"].shape[1]:],
+        skip_special_tokens=True,
+    ).strip()
+
+    # Parse JSON from generated output; fallback to rule-based on failure.
+    try:
+        j_start = decoded.find("{")
+        j_end   = decoded.rfind("}") + 1
+        if j_start == -1 or j_end <= 0:
+            raise ValueError("No JSON object in output")
+        parsed = json.loads(decoded[j_start:j_end])
+        return SignalAssessment(**parsed)
+    except Exception:
+        # Fallback: rule-based rather than crashing the pipeline.
+        z_vals = [abs(z) for z in r.z_scores.values()]
+        max_z  = max(z_vals) if z_vals else 0.0
+        return _rule_based_signal(r.risk_score, max_z)
+
 
 def _rule_based_signal(risk_score: float, max_z: float) -> SignalAssessment:
     """Deterministic signal assessment for EVAL_NO_LLM mode."""
@@ -69,6 +173,11 @@ def signal_agent_node(state: dict) -> dict:
 
     if os.getenv("EVAL_NO_LLM", "").lower() in {"1", "true", "yes"}:
         return {"signal_assessment": _rule_based_signal(r.risk_score, max_z)}
+
+    # USE_LORA_SIGNAL: route to local Phi-3-mini LoRA adapter (no Groq call).
+    # Priority: EVAL_NO_LLM (CI, rule-based) > USE_LORA_SIGNAL (LoRA) > default (Groq).
+    if os.getenv("USE_LORA_SIGNAL", "").lower() in {"1", "true", "yes"}:
+        return {"signal_assessment": _lora_signal_inference(r)}
 
     from src.agent.graph import _get_groq, _get_kb
 
