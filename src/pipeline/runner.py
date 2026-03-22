@@ -11,14 +11,12 @@ Run from repo root: python -c "from src.pipeline.runner import NeonatalPipeline;
 from __future__ import annotations
 
 import pickle
-import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(REPO_ROOT))
 
 from src.pipeline.result import BradycardiaEvent, PipelineResult
 
@@ -115,12 +113,53 @@ class NeonatalPipeline:
             if col in feat_df.columns
         }
 
+        # FIX-5: Runtime skew check — warns if stored z-scores diverge from recomputed values.
+        # Catches lookback-window mismatch between runner.py (_LOOKBACK) and run_nb04.py.
+        import logging as _log
+        import math as _math
+
+        _skew_warnings: list[str] = []
+        for _feat in self._feature_cols:
+            if _feat not in z_scores or _feat not in personal_baseline:
+                continue
+            _stored_z = z_scores[_feat]
+            _x = hrv_values[_feat]
+            _mean = personal_baseline[_feat]["mean"]
+            _std = personal_baseline[_feat]["std"]
+            _recomputed = (_x - _mean) / _std
+            if not (_math.isfinite(_stored_z) and _math.isfinite(_recomputed)):
+                continue
+            if abs(_recomputed - _stored_z) > 0.5:
+                _skew_warnings.append(
+                    f"{_feat}: stored_z={_stored_z:.3f} recomputed={_recomputed:.3f} "
+                    f"diff={abs(_recomputed - _stored_z):.3f}"
+                )
+        if _skew_warnings:
+            _log.warning(
+                "FIX-5 baseline skew detected for %s — runner.py and run_nb04.py "
+                "may be using different lookback windows:\n%s",
+                patient_id,
+                "\n".join(_skew_warnings),
+            )
+            if len(_skew_warnings) == len(self._feature_cols):
+                raise RuntimeError(
+                    f"All features show baseline skew for {patient_id}. "
+                    "Check _LOOKBACK in runner.py matches LOOKBACK in run_nb04.py."
+                )
+
         # ONNX inference
         feature_vector = np.array(
             [[hrv_values[f] for f in self._feature_cols]], dtype=np.float32
         )
         onnx_output = self._sess.run(None, {"hrv_features": feature_vector})
-        risk_score  = float(onnx_output[1][0, 1])
+
+        prob_matrix = onnx_output[1]
+        if not isinstance(prob_matrix, np.ndarray) or prob_matrix.shape != (1, 2):
+            raise RuntimeError(
+                f"Unexpected ONNX output shape {getattr(prob_matrix, 'shape', type(prob_matrix))}; "
+                "expected (1, 2). Re-export with zipmap=False."
+            )
+        risk_score = float(np.clip(prob_matrix[0, 1], 0.0, 1.0))
 
         # Bradycardia events: windows where mean_rr > 600ms (HR < 100 bpm).
         # Note: PICS .atr annotations aggregate clustered events into single episodes,
