@@ -53,6 +53,34 @@ jobs:
           --fail-below-f1 0.80
           --fail-above-fnr 0.0
 
+      - name: Run multi-agent eval (no-LLM, CI gate)
+        env:
+          QDRANT_PATH: qdrant_local
+        run: >
+          python eval/eval_agent.py
+          --agent multi_agent
+          --no-llm
+          --fail-below-f1 0.80
+          --fail-above-fnr 0.0
+          --output results/eval_multiagent.json
+
+      - name: Compare generalist vs multi-agent (FNR regression gate)
+        run: |
+          python -c "
+          import json
+          g = json.load(open('results/eval_agent.json'))
+          m = json.load(open('results/eval_multiagent.json'))
+          delta_f1       = m['f1']      - g['f1']
+          delta_fnr      = m['fnr_red'] - g['fnr_red']
+          delta_fnr_hard = m['fnr_hard'] - g['fnr_hard']
+          print(f'F1 delta:       {delta_f1:+.3f}')
+          print(f'FNR delta:      {delta_fnr:+.3f}')
+          print(f'Hard-FNR delta: {delta_fnr_hard:+.3f}')
+          assert delta_fnr <= 0, f'Multi-agent FNR WORSE than generalist: {delta_fnr:+.3f}'
+          assert delta_fnr_hard <= 0, f'Multi-agent hard-FNR WORSE: {delta_fnr_hard:+.3f}'
+          print('CI PASS: multi-agent FNR not worse than generalist on clean or hard scenarios')
+          "
+
       - name: Upload eval results
         uses: actions/upload-artifact@v4
         with:
