@@ -71,3 +71,52 @@ A Phase 5 live-LLM result is an improvement over Phase 4 if and only if:
 1. FNR(RED) remains 0.000
 2. Hard-scenario FNR(RED) ≤ 0.000 (Phase 4 live-LLM value)
 3. Overall F1 (live LLM) > 0.533 (Phase 4 live-LLM value)
+
+---
+
+## Phase 6 — Three-Way Comparison
+
+*Phase 6 recorded 2026-03-22. Groq API key exhausted — live-LLM rows pending key restoration.*
+*LoRA adapter pending training run in `notebooks/05_signal_specialist_lora.ipynb`.*
+
+### No-LLM Gate (CI-verified, rule-based path)
+
+| Approach | F1 | FNR (RED) | FNR (hard) | Protocol | n |
+|----------|----|-----------|------------|----------|---|
+| Generalist (Phase 4) | 1.000 | 0.000 | 0.000 | 100% | 30 |
+| Multi-agent (Phase 5) | 1.000 | 0.000 | 0.000 | 100% | 30 |
+| Multi-agent + LoRA signal (Phase 6) | *pending* | *pending* | *pending* | *pending* | — |
+
+The no-LLM gate is a CI pass/fail check, not a quality measure. All rule-based paths map
+`risk_score > 0.70 → RED` deterministically, so F1=1.000 is structurally guaranteed.
+
+### Live-LLM (Groq llama-3.3-70b-versatile) — Primary Quality Metric
+
+| Approach | F1 | FNR (RED) | FNR (hard) | Protocol | Latency p50 | Notes |
+|----------|----|-----------|------------|----------|-------------|-------|
+| Generalist single-prompt (Phase 4) | 0.533 | 0.000 | 0.000 | 66.7% | ~2s | Baseline |
+| Multi-agent, all Groq (Phase 5) | *pending* | *pending* | *pending* | *pending* | ~4s | Run when API restored |
+| Multi-agent + LoRA signal (Phase 6) | *pending* | *pending* | *pending* | *pending* | ~0.5s signal | Run after LoRA training |
+
+**To fill pending rows:**
+```bash
+# Multi-agent live-LLM (Phase 5 row):
+QDRANT_PATH=qdrant_local python eval/eval_agent.py \
+    --agent multi_agent --output results/eval_multiagent_live.json
+
+# Multi-agent + LoRA signal (Phase 6 row):
+USE_LORA_SIGNAL=1 QDRANT_PATH=qdrant_local python eval/eval_agent.py \
+    --agent multi_agent --output results/eval_lora.json
+```
+
+### Phase 6 Success Criteria
+
+| Criterion | Target | Status |
+|-----------|--------|--------|
+| FIX-10 distribution logging | Present after any retrain | ✅ |
+| FIX-11 label gate in notebook | Cell 0 of notebook 05 | ✅ |
+| LoRA training data | ≥ 200 examples in data/lora_training/ | ✅ |
+| USE_LORA_SIGNAL toggle | Routes to local inference | ✅ |
+| Multi-agent live F1 > 0.533 | Positive delta vs generalist | *pending* |
+| LoRA F1 ≥ multi-agent F1 | LoRA not worse than Groq specialist | *pending* |
+| FNR(RED) = 0.000 all rows | Safety constraint holds | ✅ (no-LLM) |
