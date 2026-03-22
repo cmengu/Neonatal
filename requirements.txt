@@ -29,5 +29,11 @@ fastapi
 uvicorn[standard]
 httpx
 
+# Phase 6 — LoRA fine-tuning
+peft==0.18.1
+datasets==4.8.3
+trl==0.29.1
+accelerate==1.13.0
+
 # Dev / CI
 pytest==9.0.2
