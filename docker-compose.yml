@@ -1,4 +1,29 @@
+# NeonatalGuard — 4-service Docker Compose
+# Default: starts api + qdrant
+# Eval profile:  docker compose --profile eval up
+# LoRA profile:  docker compose --profile lora up
 services:
+
+  neonatalguard-api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      # Empty QDRANT_PATH → _get_kb() uses networked Qdrant (QDRANT_HOST/PORT below)
+      QDRANT_PATH: ""
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: "6333"
+    volumes:
+      - ./data:/app/data          # audit.db persisted on host
+      - ./logs:/app/logs
+      - ./models/exports:/app/models/exports
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    platform: linux/arm64
+    restart: unless-stopped
+
   qdrant:
     image: qdrant/qdrant:latest
     ports:
@@ -6,7 +31,40 @@ services:
       - "6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
+    platform: linux/arm64
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  eval-runner:
+    build: .
+    command: >
+      python eval/run_all_evals.py --agent multi_agent
+    environment:
+      QDRANT_PATH: ""
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: "6333"
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./results:/app/results
+    depends_on:
+      neonatalguard-api:
+        condition: service_started
+      qdrant:
+        condition: service_healthy
+    profiles: ["eval"]
+    platform: linux/arm64
+
+  signal-specialist:
+    image: ollama/ollama
+    volumes:
+      - ./models/exports/signal_specialist_lora:/models
+    profiles: ["lora"]
+    platform: linux/arm64
 
 volumes:
   qdrant_data:
