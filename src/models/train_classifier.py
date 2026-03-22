@@ -80,6 +80,29 @@ def train() -> tuple:
     df = pd.read_csv(REPO_ROOT / "data" / "processed" / "combined_features_labelled.csv")
     df = df.dropna(subset=HRV_FEATURE_COLS + [LABEL_COL])
 
+    # FIX-10: Log training data distribution for retrain traceability.
+    # Console output logged immediately; machine-readable values captured in
+    # _dist_* locals and written in the existing "w" block below to avoid
+    # silent overwrite by the later open(log_path, "w") call.
+    logging.info("=== Training Data Distribution ===")
+    logging.info("Total rows: %d | Positive: %d (%.3f%%)",
+        len(df), df[LABEL_COL].sum(), 100 * df[LABEL_COL].mean())
+    logging.info("Per-patient distribution:")
+    for _pid, _grp in df.groupby("record_name"):
+        _pos = int(_grp[LABEL_COL].sum())
+        logging.info("  %-12s %d/%d pos (%.2f%%)", _pid, _pos, len(_grp), 100 * _pos / len(_grp))
+    logging.info("Feature statistics (mean ± std):")
+    for _feat in HRV_FEATURE_COLS:
+        logging.info("  %-20s %.3f ± %.3f", _feat, df[_feat].mean(), df[_feat].std())
+    # Captured here; written in the "w" block after training to avoid overwrite.
+    _dist_n_total   = len(df)
+    _dist_n_pos     = int(df[LABEL_COL].sum())
+    _dist_pos_rate  = df[LABEL_COL].mean()
+    _dist_feat_stats = {
+        feat: (float(df[feat].mean()), float(df[feat].std()))
+        for feat in HRV_FEATURE_COLS
+    }
+
     orig_pos = int(df[LABEL_COL].sum())
     df = expand_labels(df)
     expanded_pos = int(df[LABEL_COL].sum())
@@ -172,6 +195,14 @@ def train() -> tuple:
         f.write(f"n_test: {len(y_test)}\n")
         f.write(f"n_pos_test: {int(y_test.sum())}\n")
         f.write(f"lead_windows: {LEAD_WINDOWS}\n")
+        # FIX-10: Distribution stats — written last to avoid conflict with any
+        # earlier log reads that only expect AUC/pos_rate at the top.
+        f.write(f"n_total: {_dist_n_total}\n")
+        f.write(f"n_positive_pre_expand: {_dist_n_pos}\n")
+        f.write(f"pos_rate_pre_expand: {_dist_pos_rate:.6f}\n")
+        for _feat, (_mean, _std) in _dist_feat_stats.items():
+            f.write(f"feature_{_feat}_mean: {_mean:.4f}\n")
+            f.write(f"feature_{_feat}_std: {_std:.4f}\n")
 
     logging.info("Saved: %s/classifier.pkl", EXPORTS)
     logging.info("Saved: %s/train_classifier.log", LOGS_DIR)
