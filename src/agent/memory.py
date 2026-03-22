@@ -5,6 +5,9 @@ temporal context ("this patient had 3 yellow alerts in the past 24 h").
 
 Uses a plain SQLite file at data/audit.db.  Pass db_path=':memory:' in tests.
 """
+from __future__ import annotations
+
+import json
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,16 +47,26 @@ class EpisodicMemory:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS alert_history (
-                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                    patient_id    TEXT,
-                    timestamp     TEXT,
-                    concern_level TEXT,
-                    risk_score    REAL,
-                    top_feature   TEXT,
-                    top_z_score   REAL
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    patient_id      TEXT,
+                    timestamp       TEXT,
+                    concern_level   TEXT,
+                    risk_score      REAL,
+                    top_feature     TEXT,
+                    top_z_score     REAL,
+                    z_scores_json   TEXT,
+                    hrv_values_json TEXT
                 )
                 """
             )
+            # Migrate existing tables that predate FIX-2.
+            # ALTER TABLE ADD COLUMN raises OperationalError on re-run ("duplicate column name").
+            # The try/except makes this migration idempotent.
+            for col_def in ("z_scores_json TEXT", "hrv_values_json TEXT"):
+                try:
+                    conn.execute(f"ALTER TABLE alert_history ADD COLUMN {col_def}")
+                except Exception:
+                    pass  # column already present — safe to ignore
 
     def get_recent(self, patient_id: str, n: int = 7) -> list[PastAlert]:
         """Return the n most recent alerts for a patient, newest first."""
@@ -84,14 +97,22 @@ class EpisodicMemory:
             ).fetchone()[0]
         return count
 
-    def save(self, alert: NeonatalAlert, top_feature: str, top_z: float) -> None:
-        """Persist a finalised alert to the audit log."""
+    def save(
+        self,
+        alert: NeonatalAlert,
+        top_feature: str,
+        top_z: float,
+        z_scores: dict | None = None,
+        hrv_values: dict | None = None,
+    ) -> None:
+        """Persist a finalised alert to the audit log including full model inputs."""
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 """
                 INSERT INTO alert_history
-                (patient_id, timestamp, concern_level, risk_score, top_feature, top_z_score)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (patient_id, timestamp, concern_level, risk_score,
+                 top_feature, top_z_score, z_scores_json, hrv_values_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     alert.patient_id,
@@ -100,5 +121,7 @@ class EpisodicMemory:
                     alert.risk_score,
                     top_feature,
                     top_z,
+                    json.dumps(z_scores) if z_scores is not None else None,
+                    json.dumps(hrv_values) if hrv_values is not None else None,
                 ),
             )

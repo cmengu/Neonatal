@@ -308,7 +308,13 @@ def assemble_alert_node(state: AgentState) -> dict:
         past_similar_events=len(state.get("past_alerts") or []),
     )
 
-    EpisodicMemory().save(alert, top_feature_name, top_feature_z)
+    EpisodicMemory().save(
+        alert,
+        top_feature_name,
+        top_feature_z,
+        z_scores=result.z_scores,
+        hrv_values=result.hrv_values,
+    )
     return {"final_alert": alert}
 
 
