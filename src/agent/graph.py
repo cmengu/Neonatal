@@ -91,9 +91,13 @@ def _get_kb() -> ClinicalKnowledgeBase:
     """
     global _KB
     if _KB is None:
-        _KB = ClinicalKnowledgeBase(
-            path=os.getenv("QDRANT_PATH", str(REPO_ROOT / "qdrant_local"))
-        )
+        _qdrant_path = os.getenv("QDRANT_PATH")
+        if _qdrant_path is not None and not _qdrant_path:
+            # QDRANT_PATH="" (empty string) → networked mode (QDRANT_HOST/QDRANT_PORT from env)
+            _KB = ClinicalKnowledgeBase()
+        else:
+            # QDRANT_PATH unset → local default; QDRANT_PATH=<path> → use that path
+            _KB = ClinicalKnowledgeBase(path=_qdrant_path or str(REPO_ROOT / "qdrant_local"))
     return _KB
 
 
