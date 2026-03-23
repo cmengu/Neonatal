@@ -1,23 +1,23 @@
-# Plan: Build Notebook 04 — Baseline Deviation & Label Alignment (Revised)
+# Plan: Fix NB02 Truncation & Full Pipeline Rebuild
 
-**Overall Progress:** `100%` (5 / 5 steps complete)
+**Overall Progress:** `0%` (0 / 7 steps complete)
 
 ---
 
 ## TLDR
 
-Notebook 03 produced per-patient feature CSVs (9 HRV columns, no NaN) and label CSVs (`sample_idx`, `symbol` only). Notebook 04 has three jobs: (1) persist the infant5 flat-prefix trim offset from NB02 into a metadata CSV so label alignment can correct for the sample-clock shift; (2) align `sample_idx` annotations to `window_idx` using cumulative RR sum with trim-offset correction; (3) compute a rolling 10-window baseline mean and std per feature per patient, dropping warmup rows, and z-score each feature window against its baseline. Output is one `{patient_id}_windowed.csv` per patient plus a combined `all_patients_windowed.csv`, consumed by NB05 and NB06.
+NB02 loads only the first 500,000 samples (~16 minutes) of each ECG recording using `sampto=500000`. The PICS recordings are 19–70 hours long. Every downstream file — `rr_clean.csv`, `features.csv`, `labels.csv`, `windowed.csv` — is built on truncated data. Annotations span the full recording and almost none align to the truncated RR array, producing only 2 positive labels across 451 windows (should be 50+). This plan fixes the truncation in NB02 and its run script, persists `first_r_peak_absolute` per patient so NB04 can correctly anchor cumulative RR position to recording coordinates, then rebuilds NB03 and NB04 from scratch. Full rebuild is estimated at 2–5 hours of compute — run Step 4 overnight.
 
 ---
 
 ## Critical Decisions
 
-- **Decision 1: Trim offset persisted as `data/processed/trim_offsets.csv`** — NB02's `start_idx` is a local variable that is printed but never saved. It must be extracted and written to disk before NB04 can correctly align annotations. A one-time extraction script (Step 1) re-runs the trim-detection logic read-only and writes `record_name, start_idx_samples` for all 10 patients. Patients with no trim get `start_idx_samples = 0`.
-- **Decision 2: Label alignment formula is `min(beat_idx // STEP_SIZE, n_windows - 1)`** — The original formula `(beat_idx - WINDOW_SIZE) // STEP_SIZE` consistently assigns labels to windows that have already passed the event. The correct formula maps beat_idx to the last window that contains it. Proven correct for WINDOW_SIZE=50, STEP_SIZE=25 with actual infant5 window indices 0–26.
-- **Decision 3: Trim offset subtracted before cumulative comparison** — `.atr` sample indices are in original-signal coordinates. `cumulative_pos` is in trimmed-signal coordinates. Without subtraction, all infant5 annotations where `sample_idx > cumulative_pos.max()` are silently dropped as out-of-range. Annotations in the trimmed prefix (`adjusted_sample_idx < 0`) are legitimately dropped.
-- **Decision 4: Warmup drop = first LOOKBACK=10 windows via `iloc[LOOKBACK:]`** — valid because `window_idx` is confirmed contiguous from 0 for all patients.
-- **Decision 5: std=0 guard sets deviation to 0.0** — flat signal segment means no deviation from baseline. NaN would propagate into model.
-- **Decision 6: `assert nan_count == 0` hard-crashes per patient** — NaN must never reach NB05/06 silently.
+- **Decision 1: Remove `sampto` entirely from both NB02 and `scripts/run_nb02_real.py`** — any hardcoded cap risks the same problem at a different scale. Load the full recording and let wfdb handle it.
+- **Decision 2: Persist `first_r_peak_absolute` to `data/processed/first_r_peaks.csv`** — NB04 needs the absolute sample position of beat 0 to anchor `cumulative_pos` in recording coordinates. Computing on the fly would make NB04 depend on raw ECG files being present. One small CSV keeps NB04 self-contained.
+- **Decision 3: `first_r_peak_absolute = start_idx + r_peaks[0]`** — this is the sample position of the first detected R-peak in the original (pre-trim) recording. It anchors `cumulative_pos` so that `cumulative_pos[i]` gives the absolute sample position of beat `i`.
+- **Decision 4: Run infant1 alone first, time it, then run all 10** — processing a 22-hour ECG through neurokit2 is unknown territory. Fail fast on one patient before committing to an overnight run.
+- **Decision 5: Fix both `notebooks/02_signal_cleaning.ipynb` AND `scripts/run_nb02_real.py`** — both contain the truncation. Fixing only one leaves the other as a landmine.
+- **Decision 6: `fs` is already read from the wfdb record header** — NB02 Cell 1 already overrides `FS_ECG=500` with the actual record fs. Infant1 and infant5 at 250Hz are already handled correctly. No change needed there.
 
 ---
 
@@ -25,9 +25,11 @@ Notebook 03 produced per-patient feature CSVs (9 HRV columns, no NaN) and label 
 
 | Unknown | Required | Source | Blocking | Resolved |
 |---------|----------|--------|----------|----------|
-| Which patients have non-zero trim offsets | `start_idx` per patient | Step 1 extraction script | Steps 2–4 | ✅ Resolved by Step 1 |
-| NB05 column expectations | Confirm `*_dev` + `label` schema | NB05 not yet written | None — NB05 is blank | ✅ No conflict |
-| window_idx formula correctness | Proven: `min(beat_idx // STEP_SIZE, n_windows - 1)` | Logic check against infant5 feature CSV | Step 3 | ✅ Resolved in review |
+| Full recording duration per patient | Confirmed: 19–70 hours from diagnostic | Diagnostic output | All steps | ✅ |
+| Whether `fs` is per-patient or hardcoded | Confirmed: read from record header in NB02 Cell 1 | NB02 code review | Step 1 | ✅ |
+| Whether `sampto` appears elsewhere | Only in NB02 Cell 1 and `run_nb02_real.py` | Code review | Step 1 | ✅ |
+| Compute time estimate | Unknown until infant1 test run | Step 3 timing | Step 4 | ✅ Resolved by Step 3 |
+| NB03 PATIENTS list | Confirmed: all 10 in sync | Previous review | Step 5 | ✅ |
 
 ---
 
@@ -46,47 +48,66 @@ Notebook 03 produced per-patient feature CSVs (9 HRV columns, no NaN) and label 
 ```bash
 # From /Users/ngchenmeng/Neonatal — run all, paste full output
 
-# (1) Confirm all 10 feature + label + rr_clean CSVs exist
-ls data/processed/*_features.csv | wc -l
-ls data/processed/*_labels.csv   | wc -l
-ls data/processed/*_rr_clean.csv | grep -v simulated | wc -l
-
-# (2) Confirm feature schema and window_idx range
+# (1) Confirm current beat counts — baseline before rebuild
 python -c "
 import pandas as pd, glob
-for f in sorted(glob.glob('data/processed/*_features.csv')):
+for f in sorted(glob.glob('data/processed/infant*_rr_clean.csv')):
     df = pd.read_csv(f)
-    p  = f.split('/')[-1].replace('_features.csv','')
-    print(p, df.shape, 'window_idx:', df.window_idx.min(), '-', df.window_idx.max(),
-          'contiguous:', (df.window_idx.diff().dropna() == 1).all())
+    print(f.split('/')[-1], len(df), 'beats')
 "
 
-# (3) Confirm label schema
+# (2) Confirm sampto appears in exactly two places
+grep -rn 'sampto' notebooks/02_signal_cleaning.ipynb scripts/run_nb02_real.py
+
+# (3) Confirm raw ECG files exist for all 10 patients
+ls data/raw/physionet.org/files/picsdb/1.0.0/infant*_ecg.hea | wc -l
+
+# (4) Confirm NB03 PATIENTS is all 10 (grep the script — Step 5 runs scripts/run_nb03.py, not the notebook)
+grep -n 'PATIENTS' scripts/run_nb03.py | head -5
+
+# (5) Check disk space — full recordings will be large
+df -h .
+
+# (6) Verify NB04 runner exists (canonical: run_nb04.py)
+test -f scripts/run_nb04.py && echo "run_nb04.py exists" || echo "WARNING: run_nb04.py missing"
+
+# (7) Capture current rr_clean, features, labels — write baseline for Steps 4 and 5
 python -c "
-import pandas as pd, glob
-for f in sorted(glob.glob('data/processed/*_labels.csv')):
+import pandas as pd, glob, json, sys, hashlib
+from pathlib import Path
+old_rr = {f.split('/')[-1].replace('_rr_clean.csv',''): len(pd.read_csv(f))
+          for f in glob.glob('data/processed/infant*_rr_clean.csv')}
+old_w  = {f.split('/')[-1].replace('_features.csv',''): len(pd.read_csv(f))
+          for f in glob.glob('data/processed/infant*_features.csv')}
+old_l  = {}
+old_l_checksum = {}
+for f in glob.glob('data/processed/infant*_labels.csv'):
+    p = f.split('/')[-1].replace('_labels.csv','')
     df = pd.read_csv(f)
-    print(f.split('/')[-1], df.shape, list(df.columns), sorted(df.symbol.unique()))
+    old_l[p] = len(df)
+    old_l_checksum[p] = hashlib.sha256(df['sample_idx'].astype(int).astype(str).str.cat(sep=',').encode()).hexdigest()
+if not old_w or len(old_w) < 10:
+    print('ERROR: old_windows empty or incomplete — run Pre-Flight after NB03 has produced features')
+    sys.exit(1)
+Path('data/processed/.baseline_pre_rebuild.json').write_text(
+    json.dumps({'old_rr_beats': old_rr, 'old_windows': old_w, 'old_labels': old_l, 'old_labels_checksum': old_l_checksum}, indent=2))
+print('Saved .baseline_pre_rebuild.json')
+print('old_rr_beats:', old_rr)
+print('old_windows:', old_w)
+print('old_labels:', old_l)
 "
-
-# (4) Confirm NB02 trim logic is readable (needed for Step 1 extraction)
-grep -n 'start_idx\|flat prefix\|Trimmed' notebooks/02_signal_cleaning.ipynb | head -20
-
-# (5) Confirm trim_offsets.csv does NOT yet exist (Step 1 creates it)
-ls data/processed/trim_offsets.csv 2>/dev/null || echo "NOT FOUND — safe to create"
-
-# (6) Confirm NB04 does NOT yet exist
-ls notebooks/04_baseline_deviation.ipynb 2>/dev/null || echo "NOT FOUND — safe to create"
 ```
 
 **Baseline Snapshot (fill in before Step 1):**
 ```
-Feature CSVs present (expect 10):      ____
-Label CSVs present (expect 10):        ____
-rr_clean CSVs (real, expect 10):       ____
-window_idx contiguous for all:         ____
-trim_offsets.csv already exists:       ____
-NB04 already exists:                   ____
+infant1 beats (expect ~5125 truncated):   ____
+infant5 beats (expect ~706 truncated):    ____
+sampto appears in (expect 2 locations):   ____
+Raw ECG .hea files (expect 10):           ____
+NB03 PATIENTS (expect all 10):            ____
+Free disk space (need ~10GB):             ____
+run_nb04.py exists:                       ____ (Pre-Flight (6))
+.baseline_pre_rebuild.json written:       ____ (Steps 4 and 5 require this)
 ```
 
 ---
@@ -94,402 +115,148 @@ NB04 already exists:                   ____
 ## Steps Analysis
 
 ```
-Step 1 (Extract trim offsets)     — Critical      — full code review  — Idempotent: Yes
-Step 2 (Build NB04)               — Critical      — full code review  — Idempotent: Yes
-Step 3 (Run NB04)                 — Critical      — verification only — Idempotent: Yes
-Step 4 (Smoke-check outputs)      — Non-critical  — verification only — Idempotent: Yes
-Step 5 (Regression guard)         — Non-critical  — verification only — Idempotent: Yes
+Step 1 (Fix NB02 notebook)           — Critical     — full code review  — Idempotent: Yes
+Step 2 (Fix run_nb02_real.py)        — Critical     — full code review  — Idempotent: Yes
+Step 3 (Test run infant1 only)       — Critical     — verification only — Idempotent: Yes
+Step 4 (Full rebuild all 10)         — Critical     — verification only — Idempotent: Yes
+Step 5 (Rebuild NB03)                — Critical     — verification only — Idempotent: Yes
+Step 6 (Rebuild NB04)                — Critical     — verification only — Idempotent: Yes
+Step 7 (Verify label alignment)      — Critical     — verification only — Idempotent: Yes
 ```
 
 ---
 
 ## Tasks
 
-### Phase 1 — Persist Trim Offsets
+### Phase 1 — Fix NB02
 
 ---
 
-- [ ] 🟥 **Step 1: Extract and persist trim offsets to `data/processed/trim_offsets.csv`** — *Critical: NB04 label alignment is wrong without this*
+- [ ] 🟥 **Step 1: Fix truncation in `notebooks/02_signal_cleaning.ipynb`** — *Critical: root cause of all label alignment failures*
 
-  **Idempotent:** Yes — script overwrites `trim_offsets.csv` with identical content on re-run.
+  **Idempotent:** Yes — same fix on re-run.
 
-  **Context:** NB02 detects and trims a flat prefix from each patient's ECG signal before R-peak detection. The trim offset (`start_idx`) is printed but never saved. `.atr` annotation `sample_idx` values are in original-signal coordinates; `cumulative_pos` built from `rr_clean.csv` is in trimmed-signal coordinates. Without subtracting `start_idx` from each annotation's `sample_idx`, all annotations where `sample_idx > cumulative_pos.max()` are silently dropped — confirmed to affect infant5 where ~364,000 samples were trimmed. This step re-runs the trim-detection logic read-only across all 10 patients and writes `{record_name, start_idx_samples}` to `data/processed/trim_offsets.csv`.
-
-  **Pre-Read Gate — run once; output decides action:**
-  ```bash
-  grep -n 'start_idx\|flat prefix' notebooks/02_signal_cleaning.ipynb | head -5
-  python -c "
-  import pandas as pd, os
-  p = 'data/processed/trim_offsets.csv'
-  if os.path.exists(p):
-      df = pd.read_csv(p)
-      assert len(df) == 10 and list(df.columns) == ['record_name','start_idx_samples'], 'BAD SCHEMA'
-      print('EXISTS AND VALID — skip script')
-  else:
-      print('NOT FOUND — run script')
-  "
-  ```
-  If `EXISTS AND VALID` → skip Step 1 script. If `NOT FOUND` or assertion fails → run script.
-
-  ```python
-  # scripts/extract_trim_offsets.py
-  # Run from repo root: python scripts/extract_trim_offsets.py
-
-  import os
-  from pathlib import Path
-  import numpy as np
-  import wfdb
-  import pandas as pd
-
-  REPO_ROOT  = Path(os.getcwd())
-  RAW_DIR    = REPO_ROOT / "data" / "raw" / "physionet.org" / "files" / "picsdb" / "1.0.0"
-  OUT_PATH   = REPO_ROOT / "data" / "processed" / "trim_offsets.csv"
-  PATIENTS   = [f"infant{i}" for i in range(1, 11)]
-  FS_ECG     = 500
-  WINDOW     = 100     # must match NB02 trim-detection window size
-  STD_THRESH = 0.001   # must match NB02 threshold
-
-  rows = []
-  for patient_id in PATIENTS:
-      record_path = str(RAW_DIR / f"{patient_id}_ecg")
-      record      = wfdb.rdsamp(record_path, sampto=500000)
-      ecg_signal  = record[0][:, 0].astype(float)
-
-      start_idx = 0
-      for i in range(0, len(ecg_signal) - WINDOW, WINDOW):
-          if ecg_signal[i : i + WINDOW].std() > STD_THRESH:
-              start_idx = i
-              break
-
-      rows.append({"record_name": patient_id, "start_idx_samples": start_idx})
-      print(f"  {patient_id}: start_idx_samples = {start_idx} "
-            f"({start_idx / FS_ECG:.1f}s trimmed)")
-
-  df = pd.DataFrame(rows)
-  df.to_csv(OUT_PATH, index=False)
-  print(f"\nSaved: {OUT_PATH}")
-  print(df.to_string(index=False))
-  ```
-
-  **What it does:** Reads each patient's raw ECG record, detects the flat-prefix boundary using the same logic as NB02 (window=100 samples, std threshold=0.001), records `start_idx_samples`, and writes `data/processed/trim_offsets.csv`.
-
-  **Why this approach:** Re-running the detection logic is safer than parsing printed NB02 output. The logic is a direct copy from NB02 Cell 1 — if NB02 is ever re-run with different parameters, this script must be updated to match.
-
-  **Assumptions:**
-  - NB02 trim-detection uses `window=100` and `std > 0.001` — confirmed by reading NB02 Cell 1.
-  - Raw ECG files live directly under `RAW_DIR` (no per-patient subdir): `RAW_DIR / f"{patient_id}_ecg"` — e.g. `.../1.0.0/infant5_ecg.hea`.
-  - Patients with no flat prefix will produce `start_idx = 0` (correct — no offset needed).
-
-  **Risks:**
-  - NB02 trim parameters changed → offsets wrong → mitigation: `grep` NB02 for `window` and `0.001` before running.
-  - `start_idx` loop exits at first non-flat window → if signal starts non-flat, `start_idx = 0` (correct for those patients).
-
-  **Git Checkpoint:**
-  ```bash
-  git add scripts/extract_trim_offsets.py data/processed/trim_offsets.csv
-  git commit -m "step 1: persist trim offsets for all 10 patients"
-  ```
-
-  **✓ Verification Test:**
-
-  **Type:** Unit
-
-  **Action:**
-  ```bash
-  python -c "
-  import pandas as pd
-  df = pd.read_csv('data/processed/trim_offsets.csv')
-  assert list(df.columns) == ['record_name', 'start_idx_samples'], f'Wrong columns: {list(df.columns)}'
-  assert len(df) == 10, f'Expected 10 rows, got {len(df)}'
-  assert df['start_idx_samples'].dtype in ['int64','float64'], 'start_idx not numeric'
-  assert (df['start_idx_samples'] >= 0).all(), 'Negative offset found'
-  infant5_offset = df.loc[df.record_name == 'infant5', 'start_idx_samples'].iloc[0]
-  print(df.to_string(index=False))
-  print(f'infant5 offset: {infant5_offset} samples ({infant5_offset/500:.1f}s)')
-  assert infant5_offset > 0, 'infant5 should have non-zero trim offset'
-  print('trim_offsets.csv OK')
-  "
-  ```
-
-  **Pass:** 10 rows, correct columns, infant5 `start_idx_samples > 0`.
-
-  **Fail:**
-  - `infant5 should have non-zero trim offset` → trim detection returned 0 → check raw ECG path and NB02 window/threshold parameters match script.
-  - `Expected 10 rows` → one patient's raw file missing → check `RAW_DIR` path.
-
----
-
-### Phase 2 — Build and Run Notebook 04
-
----
-
-- [ ] 🟥 **Step 2: Create `notebooks/04_baseline_deviation.ipynb`** — *Critical: produces final feature matrix for NB05 + NB06*
-
-  **Idempotent:** Yes — `nbformat` script overwrites notebook with identical cells on re-run.
+  **Context:** NB02 Cell 1's `load_rr_from_wfdb` uses `wfdb.rdsamp(..., sampto=500000)` which caps loading at 500,000 samples (~16 minutes). Recordings are 19–70 hours. This is the root cause of 2/451 positive labels. Two changes in Cell 1: remove `sampto`, and return + persist `first_r_peak_absolute`.
 
   **Pre-Read Gate:**
   ```bash
-  ls data/processed/trim_offsets.csv
-  python -c "import pandas as pd; pd.read_csv('data/processed/trim_offsets.csv'); print('trim_offsets OK')"
-  ls scripts/generate_nb04.py 2>/dev/null && echo "EXISTS — verify content matches below before overwriting" || echo "NOT FOUND — proceed to create"
-  ```
-  If `NOT FOUND` → proceed. If `EXISTS` → verify script content matches the block below before overwriting; if mismatched, update script then run.
-
-  **Action:** Create `scripts/generate_nb04.py` with the content below, then run from repo root:
-  ```bash
-  python scripts/generate_nb04.py
+  grep -n 'sampto' notebooks/02_signal_cleaning.ipynb
+  # Must return exactly 1 match. If 0 or 2+ → STOP.
   ```
 
-  **scripts/generate_nb04.py** (create this file; run from repo root):
+  **Changes to make in NB02 Cell 1:**
 
+  **Change A — Remove `sampto=500000`:**
+
+  Find this line:
   ```python
-  #!/usr/bin/env python3
-  """Generate notebooks/04_baseline_deviation.ipynb. Run from repo root: python scripts/generate_nb04.py"""
-  import os
-  from pathlib import Path
-  import nbformat
-
-  REPO_ROOT = Path(os.getcwd())
-  if REPO_ROOT.name == "notebooks":
-      REPO_ROOT = REPO_ROOT.parent
-
-  nb = nbformat.v4.new_notebook()
-
-  cell1 = '''import sys
-  import os
-  from pathlib import Path
-  import numpy as np
-  import pandas as pd
-
-  REPO_ROOT = Path(os.getcwd())
-  if REPO_ROOT.name == "notebooks":
-      REPO_ROOT = REPO_ROOT.parent
-
-  sys.path.insert(0, str(REPO_ROOT))
-
-  # NOTE: PATIENTS must stay in sync with notebooks 02 and 03.
-  PATIENTS      = [f"infant{i}" for i in range(1, 11)]
-  PROCESSED_DIR = REPO_ROOT / "data" / "processed"
-
-  WINDOW_SIZE = 50    # beats — must match NB03
-  STEP_SIZE   = 25    # beats — must match NB03
-  LOOKBACK    = 10    # windows for rolling baseline
-  FS_ECG      = 500   # Hz
-
-  HRV_COLS = [
-      "rr_ms_mean", "rr_ms_std", "rr_ms_min",
-      "rr_ms_max", "rr_ms_25%", "rr_ms_50%", "rr_ms_75%"
-  ]
-
-  # Load trim offsets — written by scripts/extract_trim_offsets.py (Step 1)
-  trim_df      = pd.read_csv(PROCESSED_DIR / "trim_offsets.csv")
-  TRIM_OFFSETS = dict(zip(trim_df["record_name"], trim_df["start_idx_samples"].astype(int)))
-
-  print(f"REPO_ROOT:     {REPO_ROOT}")
-  print(f"PROCESSED_DIR: {PROCESSED_DIR}")
-  print(f"LOOKBACK:      {LOOKBACK} windows")
-  print(f"Patients:      {PATIENTS}")
-  print(f"Trim offsets:  {TRIM_OFFSETS}")'''
-
-  cell2 = '''def align_labels_to_windows(patient_id):
-      """
-      Map annotation sample_idx -> window_idx using cumulative RR sum
-      with trim-offset correction.
-
-      Method:
-        1. Load rr_clean -> cumulative sum in samples (trimmed-signal coordinates)
-        2. Load trim offset for this patient from TRIM_OFFSETS
-        3. For each annotation: adjusted_sample_idx = sample_idx - trim_offset
-           - If adjusted_sample_idx < 0: annotation is in trimmed prefix -> drop
-        4. Find beat_idx: first beat where cumulative_pos >= adjusted_sample_idx
-        5. Map beat_idx -> window_idx: min(beat_idx // STEP_SIZE, n_windows - 1)
-        6. Drop annotations outside valid window range
-
-      Returns: set of window_idx values containing a bradycardia episode start.
-      """
-      rr_ms     = pd.read_csv(PROCESSED_DIR / f"{patient_id}_rr_clean.csv")["rr_ms"].values
-      labels_df = pd.read_csv(PROCESSED_DIR / f"{patient_id}_labels.csv")
-
-      rr_samples     = rr_ms / 1000.0 * FS_ECG
-      cumulative_pos = np.cumsum(rr_samples)
-      n_windows      = (len(rr_ms) - WINDOW_SIZE) // STEP_SIZE + 1
-      trim_offset    = TRIM_OFFSETS.get(patient_id, 0)
-
-      labelled_windows = set()
-      dropped_prefix   = 0
-      dropped_range    = 0
-
-      for _, row in labels_df.iterrows():
-          sample_idx          = row["sample_idx"]
-          adjusted_sample_idx = sample_idx - trim_offset
-
-          # Drop annotations that fall inside the trimmed prefix
-          if adjusted_sample_idx < 0:
-              dropped_prefix += 1
-              continue
-
-          # Find beat_idx: first beat whose cumulative position >= adjusted_sample_idx
-          matches = np.where(cumulative_pos >= adjusted_sample_idx)[0]
-          if len(matches) == 0:
-              dropped_range += 1
-              continue
-
-          beat_idx   = int(matches[0])
-          window_idx = min(beat_idx // STEP_SIZE, n_windows - 1)
-
-          if 0 <= window_idx < n_windows:
-              labelled_windows.add(window_idx)
-          else:
-              dropped_range += 1
-
-      # Alignment bug check: if any annotation is within rr range and trim_offset=0, at least one must map
-      if trim_offset == 0 and len(labels_df) > 0:
-          in_range = (labels_df["sample_idx"] <= cumulative_pos[-1]).any()
-          if in_range:
-              assert len(labelled_windows) > 0, (
-                  f"{patient_id}: annotations in range but all dropped — alignment bug"
-              )
-      print(f"  {patient_id}: {len(labels_df)} annotations -> "
-            f"{len(labelled_windows)} labelled windows "
-            f"(dropped_prefix={dropped_prefix}, dropped_range={dropped_range}, "
-            f"trim_offset={trim_offset})")
-      return labelled_windows'''
-
-  cell3 = '''def compute_deviations(patient_id, labelled_windows):
-      """
-      Compute rolling z-score deviation from personal baseline.
-
-      Steps:
-        1. Load features CSV
-        2. For each HRV column compute rolling mean and std over
-           previous LOOKBACK windows (exclusive of current window)
-        3. Z-score: (current - rolling_mean) / rolling_std
-        4. Guard: if rolling_std == 0, deviation = 0.0
-        5. Drop first LOOKBACK rows (warmup)
-        6. Add binary label from labelled_windows
-      """
-      features = pd.read_csv(PROCESSED_DIR / f"{patient_id}_features.csv")
-
-      # Assert window_idx is contiguous from 0 — required for iloc[LOOKBACK:] to be correct
-      assert features["window_idx"].iloc[0] == 0, \
-          f"{patient_id}: window_idx does not start at 0"
-      assert (features["window_idx"].diff().dropna() == 1).all(), \
-          f"{patient_id}: window_idx is not contiguous"
-
-      dev_cols = {}
-      for col in HRV_COLS:
-          values    = features[col].values
-          roll_mean = np.full(len(values), np.nan)
-          roll_std  = np.full(len(values), np.nan)
-
-          for i in range(LOOKBACK, len(values)):
-              window_vals  = values[i - LOOKBACK : i]
-              roll_mean[i] = window_vals.mean()
-              roll_std[i]  = window_vals.std(ddof=1)
-
-          with np.errstate(invalid="ignore", divide="ignore"):
-              deviation = np.where(
-                  roll_std == 0,
-                  0.0,
-                  (values - roll_mean) / roll_std
-              )
-          dev_cols[f"{col}_dev"] = deviation
-
-      result = pd.DataFrame(dev_cols)
-      result.insert(0, "window_idx",  features["window_idx"])
-      result.insert(0, "record_name", features["record_name"])
-
-      # Drop warmup rows — valid because window_idx is contiguous from 0
-      result = result.iloc[LOOKBACK:].reset_index(drop=True)
-
-      result["label"] = result["window_idx"].apply(
-          lambda w: 1 if w in labelled_windows else 0
-      )
-
-      n_pos = result["label"].sum()
-      n_neg = len(result) - n_pos
-      print(f"  {patient_id}: {len(result)} windows after warmup drop "
-            f"(pos={n_pos}, neg={n_neg}, ratio={n_pos/max(len(result),1):.2%})")
-
-      nan_count = result.isnull().sum().sum()
-      assert nan_count == 0, f"NaN in output for {patient_id}: {result.isnull().sum()}"
-
-      return result'''
-
-  cell4 = '''all_patients = []
-
-  for patient_id in PATIENTS:
-      print(f"\\n-- {patient_id} --")
-      labelled_windows = align_labels_to_windows(patient_id)
-      windowed_df      = compute_deviations(patient_id, labelled_windows)
-
-      out_path = PROCESSED_DIR / f"{patient_id}_windowed.csv"
-      windowed_df.to_csv(out_path, index=False)
-      print(f"  Saved: {out_path}")
-      all_patients.append(windowed_df)
-
-  combined      = pd.concat(all_patients, ignore_index=True)
-  combined_path = PROCESSED_DIR / "all_patients_windowed.csv"
-  combined.to_csv(combined_path, index=False)
-
-  print(f"\\nNotebook 04 complete.")
-  print(f"Combined shape:   {combined.shape}")
-  print(f"Total pos labels: {combined['label'].sum()} / {len(combined)}")
-  print(f"Overall pos rate: {combined['label'].mean():.2%}")
-  print(f"NaN in combined:  {combined.isnull().sum().sum()}")'''
-
-  cell5 = '''import matplotlib.pyplot as plt
-
-  fig, axes = plt.subplots(2, 5, figsize=(18, 6))
-  axes = axes.flatten()
-
-  for idx, patient_id in enumerate(PATIENTS):
-      df  = pd.read_csv(PROCESSED_DIR / f"{patient_id}_windowed.csv")
-      ax  = axes[idx]
-      ax.plot(df["window_idx"], df["rr_ms_mean_dev"], linewidth=0.8, color="steelblue")
-      pos = df[df["label"] == 1]
-      ax.scatter(pos["window_idx"], pos["rr_ms_mean_dev"],
-                 color="red", s=30, zorder=5, label="bradycardia")
-      ax.set_title(f"{patient_id} (n={len(df)}, pos={len(pos)})", fontsize=9)
-      ax.set_xlabel("window_idx", fontsize=7)
-      ax.set_ylabel("rr_ms_mean_dev", fontsize=7)
-      ax.axhline(0, color="grey", linestyle="--", linewidth=0.5)
-
-  plt.suptitle("RR Mean Deviation with Bradycardia Events (red) — post trim-offset fix", fontsize=11)
-  plt.tight_layout()
-  plt.show()'''
-
-  nb.cells = [
-      nbformat.v4.new_code_cell(cell1),
-      nbformat.v4.new_code_cell(cell2),
-      nbformat.v4.new_code_cell(cell3),
-      nbformat.v4.new_code_cell(cell4),
-      nbformat.v4.new_code_cell(cell5),
-  ]
-
-  out_path = REPO_ROOT / "notebooks" / "04_baseline_deviation.ipynb"
-  with open(out_path, "w") as f:
-      nbformat.write(nb, f)
-  print(f"Notebook written: {out_path}")
+  record = wfdb.rdsamp(str(record_path), sampto=500000)
+  ```
+  Replace with:
+  ```python
+  record = wfdb.rdsamp(str(record_path))
   ```
 
-  **What it does:** Generates NB04 programmatically via `nbformat`. Cell 1 loads trim offsets. Cell 2 aligns labels with trim-offset correction and the fixed window formula. Cell 3 computes rolling z-score deviations with contiguous-window assertion and std=0 guard. Cell 4 runs all patients and saves CSVs. Cell 5 is a sanity plot.
+  **Change B — Capture and return `first_r_peak_absolute`:**
 
-  **Why this approach:** `nbformat` prevents raw JSON corruption. All critical fixes from the logic review are baked in — trim offset subtraction and corrected `min(beat_idx // STEP_SIZE, n_windows - 1)` formula.
+  **Scope check:** `start_idx` is defined earlier in the same function. In NB02 Cell 1 the structure is:
+  ```python
+      start_idx = 0
+      for i in range(0, len(ecg_signal) - window, window):
+          if ecg_signal[i:i+window].std() > 0.001:
+              start_idx = i
+              break
+      ...
+      ecg_signal = ecg_signal[start_idx:]
+      signals, info = nk.ecg_process(ecg_signal, ...)
+  ```
+  `start_idx` is in scope at the insertion point. If your Cell 1 uses a different variable name (e.g. `trim_start`), adapt the formula accordingly.
+
+  Find this block:
+  ```python
+  signals, info = nk.ecg_process(ecg_signal, sampling_rate=fs)
+  r_peaks       = info["ECG_R_Peaks"]
+  rr_ms         = np.diff(r_peaks) / fs * 1000.0
+
+  rolling_median = np.median(rr_ms)
+  mask           = np.abs(rr_ms - rolling_median) / rolling_median < ectopic_threshold
+  rr_clean       = rr_ms[mask]
+
+  print(f"  Raw beats: {len(rr_ms)}, after ectopic removal: {len(rr_clean)}")
+  return rr_clean
+  ```
+
+  Replace with:
+  ```python
+  signals, info = nk.ecg_process(ecg_signal, sampling_rate=fs)
+  r_peaks              = info["ECG_R_Peaks"]
+  first_r_peak_abs     = int(start_idx + r_peaks[0])
+  rr_ms                = np.diff(r_peaks) / fs * 1000.0
+
+  rolling_median = np.median(rr_ms)
+  mask           = np.abs(rr_ms - rolling_median) / rolling_median < ectopic_threshold
+  rr_clean       = rr_ms[mask]
+
+  print(f"  Raw beats: {len(rr_ms)}, after ectopic removal: {len(rr_clean)}")
+  print(f"  first_r_peak_absolute: {first_r_peak_abs} samples ({first_r_peak_abs/fs:.2f}s)")
+  return rr_clean, first_r_peak_abs
+  ```
+
+  **Change C — Update the call site to unpack both return values and save `first_r_peaks.csv`:**
+
+  Find this block:
+  ```python
+  if USE_REAL_DATA:
+      for patient_id in PATIENTS:
+          record_path = REAL_DATA_DIR / f"{patient_id}_ecg"
+          rr_clean    = load_rr_from_wfdb(record_path, FS_ECG, ECTOPIC_THRESHOLD)
+          out_path    = PROCESSED_DIR / f"{patient_id}_rr_clean.csv"
+          pd.DataFrame({'rr_ms': rr_clean}).to_csv(out_path, index=False)
+          print(f"  Saved: {out_path}  ({len(rr_clean)} rows)")
+  else:
+      print("USE_REAL_DATA=False — run simulated cells below instead")
+  ```
+
+  Replace with:
+  ```python
+  if USE_REAL_DATA:
+      first_r_peak_rows = []
+      for patient_id in PATIENTS:
+          record_path = REAL_DATA_DIR / f"{patient_id}_ecg"
+          rr_clean, first_r_peak_abs = load_rr_from_wfdb(record_path, FS_ECG, ECTOPIC_THRESHOLD)
+          out_path    = PROCESSED_DIR / f"{patient_id}_rr_clean.csv"
+          pd.DataFrame({'rr_ms': rr_clean}).to_csv(out_path, index=False)
+          print(f"  Saved: {out_path}  ({len(rr_clean)} rows)")
+          first_r_peak_rows.append({
+              'record_name':          patient_id,
+              'first_r_peak_absolute': first_r_peak_abs
+          })
+
+      frp_df   = pd.DataFrame(first_r_peak_rows)
+      frp_path = PROCESSED_DIR / "first_r_peaks.csv"
+      frp_df.to_csv(frp_path, index=False)
+      print(f"\nSaved: {frp_path}")
+      print(frp_df.to_string(index=False))
+  else:
+      print("USE_REAL_DATA=False — run simulated cells below instead")
+  ```
+
+  **What it does:** Removes the 500k sample cap so the full recording is loaded. Returns `first_r_peak_absolute` (sample position of the first R-peak in original recording coordinates) alongside `rr_clean`. Saves all 10 values to `data/processed/first_r_peaks.csv` for NB04 to consume.
+
+  **Why this approach:** `first_r_peak_absolute = start_idx + r_peaks[0]` correctly accounts for both the flat-prefix trim offset and the initial signal segment before the first beat. NB04 uses this to anchor `cumulative_pos` so beat positions are in the same coordinate space as `.atr` annotations.
 
   **Assumptions:**
-  - `trim_offsets.csv` exists with columns `record_name, start_idx_samples` (Step 1 guarantee).
-  - `window_idx` is contiguous from 0 for all patients (confirmed in pre-flight).
-  - HRV column names match `src/features/hrv.py` exactly — confirmed: `rr_ms_25%` etc.
+  - `r_peaks[0]` exists — i.e. at least one R-peak is detected. If the signal is entirely flat after trim, `r_peaks` will be empty and this will crash with an IndexError. This is correct behaviour — a flat signal should not produce an rr_clean file.
+  - `start_idx` is in scope at the point of computing `first_r_peak_abs` — confirmed by reading Cell 1 structure.
 
   **Risks:**
-  - `trim_offsets.csv` has wrong offset for infant5 → wrong label alignment → mitigation: Step 1 verification asserts `infant5 > 0` and printed offset is visually checkable.
-  - NB03 `PATIENTS` list still set to `["infant5"]` → Cell 4 fails for other patients → mitigation: pre-flight grep confirms NB03 PATIENTS.
+  - Full recording load causes OOM for very long recordings → mitigation: Step 3 tests infant1 (longest at 22h) first before committing to all 10.
+  - `nk.ecg_process` is slow on long signals → mitigation: Step 3 times infant1 so we know what to expect.
 
   **Git Checkpoint:**
   ```bash
-  git add scripts/generate_nb04.py notebooks/04_baseline_deviation.ipynb
-  git commit -m "step 2: build notebook 04 with trim-offset fix and corrected window formula"
+  git add notebooks/02_signal_cleaning.ipynb
+  git commit -m "step 1: remove sampto truncation and return first_r_peak_absolute from NB02"
   ```
 
   **✓ Verification Test:**
@@ -498,69 +265,226 @@ Step 5 (Regression guard)         — Non-critical  — verification only — Id
 
   **Action:**
   ```bash
-  python -m json.tool notebooks/04_baseline_deviation.ipynb > /dev/null && echo "valid JSON"
-
   python -c "
   import json
-  nb  = json.load(open('notebooks/04_baseline_deviation.ipynb'))
+  nb  = json.load(open('notebooks/02_signal_cleaning.ipynb'))
   src = ' '.join([''.join(c['source']) for c in nb['cells'] if c['cell_type']=='code'])
-  checks = [
-      'cumulative_pos',
-      'align_labels_to_windows',
-      'compute_deviations',
-      'LOOKBACK',
-      'roll_mean',
-      'roll_std',
-      'all_patients_windowed',
-      'nan_count',
-      'label',
-      'trim_offset',
-      'adjusted_sample_idx',
-      'TRIM_OFFSETS',
-      'min(beat_idx // STEP_SIZE',
-      'iloc[0] == 0',
-      'trim_offset == 0',
-      'in_range',
-      'alignment bug',
-  ]
-  for token in checks:
-      assert token in src, f'MISSING: {token}'
-      print(f'{token} OK')
-  print('Cell count:', sum(1 for c in nb['cells'] if c['cell_type']=='code'))
+  assert 'sampto' not in src, 'sampto still present in notebook'
+  assert 'first_r_peak_abs' in src, 'first_r_peak_abs missing'
+  assert 'first_r_peaks.csv' in src, 'first_r_peaks.csv save missing'
+  assert 'first_r_peak_rows' in src, 'first_r_peak_rows accumulator missing'
+  print('NB02 fix verified OK')
   "
   ```
 
-  **Pass:** All 17 tokens print OK, cell count = 5, valid JSON.
+  **Pass:** All 4 assertions pass, `sampto` absent.
 
   **Fail:**
-  - Token `trim_offset` or `in_range` missing → Cell 2 did not save → re-run generate script.
-  - Token `min(beat_idx // STEP_SIZE` missing → old formula still present → re-run nbformat script.
-  - JSON invalid → file corrupted → `rm notebooks/04_baseline_deviation.ipynb` and re-run script.
+  - `sampto still present` → Change A not saved → re-apply in Jupyter UI.
+  - `first_r_peak_abs missing` → Change B not saved → re-apply.
+  - `first_r_peaks.csv save missing` → Change C not saved → re-apply.
 
 ---
 
-- [ ] 🟥 **Step 3: Run Notebook 04** — *Critical: produces all_patients_windowed.csv consumed by NB05 + NB06*
+- [ ] 🟥 **Step 2: Fix truncation in `scripts/run_nb02_real.py`** — *Critical: run script must match notebook*
 
-  **Idempotent:** Yes — overwrites CSVs with identical content on re-run.
+  **Idempotent:** Yes.
+
+  **Context:** `scripts/run_nb02_real.py` has its own copy of `load_rr_from_wfdb` with `sampto=max_samples` where `MAX_SAMPLES=500000`. This is the script used to actually run NB02 processing. It must be updated to match the notebook fix.
+
+  **Pre-Read Gate:**
+  ```bash
+  grep -n 'sampto\|MAX_SAMPLES\|max_samples' scripts/run_nb02_real.py
+  # Must return matches. If 0 → file already fixed or wrong file — STOP.
+
+  grep -n 'load_rr_from_wfdb' scripts/run_nb02_real.py
+  # Must show both the definition line and exactly one call site.
+  ```
+
+  **Changes to make in `scripts/run_nb02_real.py`:**
+
+  **Change A — Remove `MAX_SAMPLES` constant:**
+
+  Find:
+  ```python
+  MAX_SAMPLES = 500000  # enough to get past flat prefixes (e.g. infant5 has ~728s flat)
+  ```
+  Delete this line entirely.
+
+  **Change B — Remove `sampto` from `wfdb.rdsamp` call:**
+
+  Find:
+  ```python
+  record = wfdb.rdsamp(str(record_path), sampto=max_samples)
+  ```
+  Replace with:
+  ```python
+  record = wfdb.rdsamp(str(record_path))
+  ```
+
+  **Change C — Remove `max_samples` parameter from function signature:**
+
+  Find:
+  ```python
+  def load_rr_from_wfdb(record_path, fs, ectopic_threshold, max_samples=MAX_SAMPLES):
+      """Load first max_samples, trim flat prefix, then process."""
+  ```
+  Replace with (docstring must change — the old one would mislead):
+  ```python
+  def load_rr_from_wfdb(record_path, fs, ectopic_threshold):
+      """Load full recording, trim flat prefix, then process."""
+  ```
+
+  **Change D — Return `first_r_peak_absolute` from function body:**
+
+  Find this block in `load_rr_from_wfdb`:
+  ```python
+    signals, info = nk.ecg_process(ecg_signal, sampling_rate=fs)
+    r_peaks = info["ECG_R_Peaks"]
+    rr_ms = np.diff(r_peaks) / fs * 1000.0
+
+    rolling_median = np.median(rr_ms)
+    mask = np.abs(rr_ms - rolling_median) / rolling_median < ectopic_threshold
+    rr_clean = rr_ms[mask]
+
+    print(f"  Raw beats: {len(rr_ms)}, after ectopic removal: {len(rr_clean)}")
+    return rr_clean
+  ```
+  Replace with:
+  ```python
+    signals, info = nk.ecg_process(ecg_signal, sampling_rate=fs)
+    r_peaks = info["ECG_R_Peaks"]
+    first_r_peak_abs = int(start_idx + r_peaks[0])
+    rr_ms = np.diff(r_peaks) / fs * 1000.0
+
+    rolling_median = np.median(rr_ms)
+    mask = np.abs(rr_ms - rolling_median) / rolling_median < ectopic_threshold
+    rr_clean = rr_ms[mask]
+
+    print(f"  Raw beats: {len(rr_ms)}, after ectopic removal: {len(rr_clean)}")
+    print(f"  first_r_peak_absolute: {first_r_peak_abs} samples ({first_r_peak_abs/fs:.2f}s)")
+    return rr_clean, first_r_peak_abs
+  ```
+
+  **Change E — Update call site to unpack and save `first_r_peaks.csv`:**
+
+  Find this block (full structure shown for indentation):
+  ```python
+  if USE_REAL_DATA:
+      for patient_id in PATIENTS:
+          try:
+              record_path = REAL_DATA_DIR / f"{patient_id}_ecg"
+              rr_clean = load_rr_from_wfdb(record_path, FS_ECG, ECTOPIC_THRESHOLD)
+              out_path = PROCESSED_DIR / f"{patient_id}_rr_clean.csv"
+              pd.DataFrame({"rr_ms": rr_clean}).to_csv(out_path, index=False)
+              print(f"  Saved: {out_path}  ({len(rr_clean)} rows)")
+          except FileNotFoundError as e:
+              print(f"  ERROR: {patient_id} record not found at {record_path}: {e}")
+              raise
+          except Exception as e:
+              print(f"  WARNING: {patient_id} skipped ({e})")
+  else:
+      print("USE_REAL_DATA=False")
+  ```
+  Replace entire block with (frp_df block is inside `if USE_REAL_DATA:`, same indentation as `for`, after the `for` loop):
+  ```python
+  if USE_REAL_DATA:
+      first_r_peak_rows = []
+      for patient_id in PATIENTS:
+          try:
+              record_path = REAL_DATA_DIR / f"{patient_id}_ecg"
+              rr_clean, first_r_peak_abs = load_rr_from_wfdb(record_path, FS_ECG, ECTOPIC_THRESHOLD)
+              out_path = PROCESSED_DIR / f"{patient_id}_rr_clean.csv"
+              pd.DataFrame({"rr_ms": rr_clean}).to_csv(out_path, index=False)
+              print(f"  Saved: {out_path}  ({len(rr_clean)} rows)")
+              first_r_peak_rows.append({"record_name": patient_id, "first_r_peak_absolute": first_r_peak_abs})
+          except FileNotFoundError as e:
+              print(f"  ERROR: {patient_id} record not found at {record_path}: {e}")
+              raise
+          except Exception as e:
+              print(f"  WARNING: {patient_id} skipped ({e})")
+      frp_df = pd.DataFrame(first_r_peak_rows)
+      frp_df.to_csv(PROCESSED_DIR / "first_r_peaks.csv", index=False)
+      print(f"\nSaved: {PROCESSED_DIR / 'first_r_peaks.csv'}")
+      print(frp_df.to_string(index=False))
+  else:
+      print("USE_REAL_DATA=False")
+  ```
+
+  **Git Checkpoint:**
+  ```bash
+  git add scripts/run_nb02_real.py
+  git commit -m "step 2: remove sampto truncation from run_nb02_real.py"
+  ```
+
+  **✓ Verification Test:**
+
+  **Type:** Unit
 
   **Action:**
   ```bash
-  cd /Users/ngchenmeng/Neonatal
-  python scripts/run_nb04.py
-  # Fallback if run script fails: jupyter nbconvert --to notebook --execute \
-  #   notebooks/04_baseline_deviation.ipynb --output notebooks/04_baseline_deviation_executed.ipynb 2>&1 | tail -40
+  python -c "
+  src = open('scripts/run_nb02_real.py').read()
+  assert 'sampto' not in src,     'sampto still present in run script'
+  assert 'MAX_SAMPLES' not in src, 'MAX_SAMPLES still present'
+  assert 'max_samples' not in src, 'max_samples still present'
+  assert 'first_r_peak_abs' in src, 'first_r_peak_abs missing from run script'
+  assert 'first_r_peaks.csv' in src, 'first_r_peaks.csv save missing'
+  print('run_nb02_real.py fix verified OK')
+  "
   ```
+
+  **Pass:** All 5 assertions pass.
+
+  **Fail:** Any assertion fails → re-apply the corresponding change.
+
+---
+
+### Phase 2 — Test Run (infant1 only)
+
+---
+
+- [ ] 🟥 **Step 3: Test run NB02 for infant1 only — time it** — *Critical: confirms full-recording processing works before overnight run*
+
+  **Idempotent:** Yes — overwrites infant1_rr_clean.csv.
+
+  **Context:** infant1 is the longest recording at ~22 hours. If it works and completes in reasonable time, all 10 will work. If it crashes or takes >60 minutes, we need to investigate before committing to the full run.
+
+  **Action:**
+
+  **Substep 3.1 —** Edit `scripts/run_nb02_real.py` directly: replace the PATIENTS line with exactly `PATIENTS = ["infant1"]` (single line, no trailing comma). Then run:
+  ```bash
+  cd /Users/ngchenmeng/Neonatal
+  time python scripts/run_nb02_real.py
+  ```
+  The `time` prefix will print elapsed time when done.
+
+  **Substep 3.2 — RESTORE PATIENTS (mandatory; Cursor MUST execute before Human Gate):**
+  If this substep is skipped, Step 4 will run with only infant1 and produce no error. Use this restore (matches exactly `PATIENTS = ["infant1"]` as set in 3.1):
+  ```bash
+  python -c "
+  from pathlib import Path
+  p = Path('scripts/run_nb02_real.py')
+  src = p.read_text()
+  if 'PATIENTS = [\"infant1\"]' in src:
+      src = src.replace('PATIENTS = [\"infant1\"]',
+          'PATIENTS = [\"infant1\", \"infant2\", \"infant3\", \"infant4\", \"infant5\", \"infant6\", \"infant7\", \"infant8\", \"infant9\", \"infant10\"]')
+  else:
+      raise SystemExit('PATIENTS restore failed: expected PATIENTS = [\"infant1\"] in file')
+  p.write_text(src)
+  "
+  grep 'PATIENTS' scripts/run_nb02_real.py | head -3
+  ```
+  Expected: output shows all 10 patients. If the restore raises → fix manually before proceeding. Do not output `[WAITING]` until this completes.
 
   **Human Gate:**
-  Paste the full per-patient printed output (window counts, pos/neg labels, trim offsets, dropped counts) before proceeding to Step 4.
+  Paste the full printed output including:
+  - `first_r_peak_absolute` value for infant1
+  - New beat count for infant1
+  - Elapsed time
 
-  ⚠️ **Specifically check infant5:** confirm `trim_offset` matches Step 1 value, `dropped_prefix` accounts for annotations before trimmed region, and `n_pos >= 0` (may be 0 — valid if all events fall in trimmed prefix, but now unlikely given offset fix).
-
-  **Termination (mandatory):** After pasting the output, output this exactly as the final line:
-  ```
-  [WAITING: per-patient NB04 execution output]
-  ```
-  Do not write any code after this line. Do not call any tools after this line. Stop and wait for human confirmation before proceeding to Step 4.
+  Output `"[WAITING: infant1 test run output and timing]"` as the final line.
+  Do not write any code after this line. Do not call any tools after this line.
 
   **✓ Verification Test:**
 
@@ -572,121 +496,370 @@ Step 5 (Regression guard)         — Non-critical  — verification only — Id
   import pandas as pd
   from pathlib import Path
 
-  expected_cols = [
-      'record_name', 'window_idx',
-      'rr_ms_mean_dev', 'rr_ms_std_dev', 'rr_ms_min_dev',
-      'rr_ms_max_dev', 'rr_ms_25%_dev', 'rr_ms_50%_dev', 'rr_ms_75%_dev',
-      'label'
-  ]
+  # Full 22h recording at ~60–80 bpm ≈ 50,000+ beats; truncated had 5125
+  rr = pd.read_csv('data/processed/infant1_rr_clean.csv')
+  print(f'infant1 beats: {len(rr)} (was 5125 truncated)')
+  assert len(rr) > 50000, f'Beat count {len(rr)} too low for full recording (expect 50,000+)'
 
-  for i in range(1, 11):
-      p    = f'infant{i}'
-      path = Path('data/processed') / f'{p}_windowed.csv'
-      assert path.exists(), f'MISSING: {path}'
-      df   = pd.read_csv(path)
-
-      assert list(df.columns) == expected_cols, f'{p} wrong cols: {list(df.columns)}'
-      assert len(df) > 0,                       f'{p}: zero rows'
-      assert df.isnull().sum().sum() == 0,       f'{p}: NaN present'
-      assert df['label'].isin([0,1]).all(),       f'{p}: label not binary'
-      assert df['record_name'].iloc[0] == p,     f'{p}: record_name mismatch'
-      assert df['window_idx'].min() == 10,       f'{p}: warmup drop wrong (min must be LOOKBACK=10, got {df["window_idx"].min()})'
-
-      print(f'{p}: {len(df)} windows, pos={df.label.sum()}, '
-            f'neg={len(df)-df.label.sum()}, NaN={df.isnull().sum().sum()} OK')
-
-  combined = pd.read_csv(Path('data/processed') / 'all_patients_windowed.csv')
-  assert combined.isnull().sum().sum() == 0, 'NaN in combined'
-  print(f'Combined: {combined.shape}, total pos={combined.label.sum()} OK')
+  # first_r_peaks.csv should now exist
+  frp = pd.read_csv('data/processed/first_r_peaks.csv')
+  assert 'infant1' in frp['record_name'].values, 'infant1 missing from first_r_peaks.csv'
+  infant1_frp = frp.loc[frp.record_name=='infant1','first_r_peak_absolute'].iloc[0]
+  print(f'infant1 first_r_peak_absolute: {infant1_frp}')
+  assert infant1_frp > 0, 'first_r_peak_absolute must be > 0'
+  print('infant1 test run OK')
   "
   ```
 
-  **Pass:** All 10 patients print OK, combined prints OK, `window_idx.min() == 10` for all, zero NaN.
+  **Pass:** Beat count > 50,000, `first_r_peaks.csv` exists with infant1 entry, `first_r_peak_absolute > 0`.
 
   **Fail:**
-  - `min must be LOOKBACK=10` → warmup drop failed or wrong LOOKBACK → check `iloc[LOOKBACK:]` in Cell 3.
-  - `zero rows` for infant5 → LOOKBACK drop consumed all 17 usable rows → check window count vs LOOKBACK.
-  - `label not binary` → `labelled_windows` set contains non-int → print `labelled_windows` for failing patient.
-  - `NaN present` → std=0 guard not firing → print `roll_std` for the affected patient and column.
+  - Beat count unchanged → `sampto` still present → re-check Step 1 and 2 verification tests.
+  - `first_r_peaks.csv` missing → Change C in Step 1 not saved → re-apply.
+  - OOM crash → recording too large for available RAM → report elapsed time and memory usage before stopping.
 
 ---
 
-### Phase 3 — Smoke-Check and Confirm
+### Phase 3 — Full Rebuild
 
 ---
 
-- [ ] 🟥 **Step 4: Smoke-check outputs** — *Non-critical: statistical sanity*
+- [ ] 🟥 **Step 4: Full NB02 rebuild — all 10 patients** — *Critical: regenerates all rr_clean CSVs and first_r_peaks.csv*
+
+  **Idempotent:** Yes — overwrites all rr_clean CSVs.
+
+  **Context:** Only run after Step 3 confirms infant1 works and timing is acceptable. Restore `PATIENTS` to all 10 in `scripts/run_nb02_real.py` before running.
+
+  **Action:**
+  ```bash
+  mkdir -p logs
+
+  grep 'PATIENTS' scripts/run_nb02_real.py | head -3
+  # Must show all 10 before running
+
+  cd /Users/ngchenmeng/Neonatal
+  nohup python scripts/run_nb02_real.py > logs/nb02_full_run.log 2>&1 &
+  echo "PID: $!"
+  ```
+
+  Monitor progress:
+  ```bash
+  tail -f logs/nb02_full_run.log
+  ```
+
+  **Human Gate:**
+  Paste the final lines of `logs/nb02_full_run.log` showing all 10 patients completed.
+
+  Output `"[WAITING: full NB02 run log output]"` as the final line.
+  Do not write any code after this line. Do not call any tools after this line.
+
+  **✓ Verification Test:**
+
+  **Type:** Integration
+
+  **Action:**
+  ```bash
+  grep -i 'error\|traceback\|exception' logs/nb02_full_run.log | head -20
+  # Must return nothing — run can exit 0 but still have per-patient errors
+
+  python -c "
+  import pandas as pd, glob, json
+
+  base = json.loads(open('data/processed/.baseline_pre_rebuild.json').read())
+  old_rr = base['old_rr_beats']
+
+  for f in sorted(glob.glob('data/processed/infant*_rr_clean.csv')):
+      p  = f.split('/')[-1].replace('_rr_clean.csv','')
+      df = pd.read_csv(f)
+      old = old_rr.get(p, 0)
+      assert len(df) > old, f'{p}: beat count {len(df)} not greater than baseline {old}'
+      print(f'{p}: {len(df)} beats (was {old}) OK')
+
+  # first_r_peaks.csv must have all 10 patients
+  frp = pd.read_csv('data/processed/first_r_peaks.csv')
+  assert len(frp) == 10, f'Expected 10 rows in first_r_peaks.csv, got {len(frp)}'
+  assert (frp.first_r_peak_absolute > 0).all(), 'Zero or negative first_r_peak_absolute found'
+  print(frp.to_string(index=False))
+  print('Full NB02 rebuild OK')
+  "
+  ```
+
+  **Pass:** All 10 have more beats than baseline (from `.baseline_pre_rebuild.json`), `first_r_peaks.csv` has 10 rows. If baseline missing → run Pre-Flight (7) first.
+
+  **Fail:**
+  - Beat count unchanged for any patient → `sampto` still in run script → re-check Step 2.
+  - Missing patient in `first_r_peaks.csv` → run crashed mid-loop → check log for error, fix, re-run for that patient only.
+
+  **Git Checkpoint:**
+  ```bash
+  git add data/processed/infant*_rr_clean.csv data/processed/first_r_peaks.csv
+  git commit -m "step 4: rebuild rr_clean CSVs from full recordings + first_r_peaks.csv"
+  ```
+
+---
+
+- [ ] 🟥 **Step 5: Rebuild NB03 — regenerate features and labels CSVs** — *Critical: features built on truncated beats are wrong*
+
+  **Idempotent:** Yes — overwrites all features and labels CSVs.
+
+  **Context:** NB03 built HRV feature windows from the truncated `rr_clean.csv`. Now that `rr_clean.csv` covers the full recording, NB03 must re-run to produce features and labels from the full beat sequence.
+
+  **Pre-Read Gate (grep the script, NOT the notebook — Step 5 runs `scripts/run_nb03.py`):**
+  ```bash
+  grep 'PATIENTS' scripts/run_nb03.py | head -3
+  python -c "
+  import pandas as pd
+  cols = pd.read_csv('data/processed/infant1_labels.csv').columns.tolist()
+  print('labels columns:', cols)
+  assert 'sample_idx' in cols, 'labels CSV must have sample_idx column — checksum formula assumes it'
+  "
+  ```
+  Must show all 10 patients and confirm `sample_idx` exists. If not → fix before running. Do not run nohup until this passes.
+
+  **Action:**
+  ```bash
+  cd /Users/ngchenmeng/Neonatal
+  nohup python scripts/run_nb03.py > logs/nb03_full_run.log 2>&1 &
+  echo "PID: $!"
+
+  # Monitor:
+  tail -f logs/nb03_full_run.log
+  ```
+
+  **Human Gate:**
+  Paste the final lines of `logs/nb03_full_run.log` showing all 10 patients completed with window counts.
+
+  Output `"[WAITING: NB03 rebuild log output]"` as the final line.
+  Do not write any code after this line. Do not call any tools after this line.
+
+  **✓ Verification Test:**
+
+  **Type:** Integration
+
+  **Action:**
+  ```bash
+  python -c "
+  import pandas as pd, glob, json
+
+  base = json.loads(open('data/processed/.baseline_pre_rebuild.json').read())
+  old_w = base['old_windows']
+  old_l = base['old_labels']
+
+  for f in sorted(glob.glob('data/processed/infant*_features.csv')):
+      p  = f.split('/')[-1].replace('_features.csv','')
+      df = pd.read_csv(f)
+      old = old_w.get(p, 0)
+      assert len(df) > old, f'{p}: window count {len(df)} not greater than baseline {old}'
+      assert df.isnull().sum().sum() == 0, f'{p}: NaN in features'
+      print(f'{p}: {len(df)} windows (was {old}) OK')
+
+  import hashlib
+  old_chk = base.get('old_labels_checksum', {})
+  assert old_chk, 'old_labels_checksum missing from baseline — re-run Pre-Flight (7)'
+  for f in sorted(glob.glob('data/processed/infant*_labels.csv')):
+      p  = f.split('/')[-1].replace('_labels.csv','')
+      df = pd.read_csv(f)
+      exp = old_l.get(p)
+      assert exp is not None, f'{p}: missing from baseline'
+      assert len(df) == exp, f'{p}: annotation count {len(df)} != expected {exp}'
+      chk = hashlib.sha256(df['sample_idx'].astype(int).astype(str).str.cat(sep=',').encode()).hexdigest()
+      assert old_chk.get(p) == chk, f'{p}: sample_idx checksum changed — labels may have been altered'
+      print(f'{p}: {len(df)} annotations OK')
+  "
+  ```
+
+  **Pass:** All 10 have more windows than baseline, annotations unchanged (labels from wfdb), no NaN. If `.baseline_pre_rebuild.json` missing → run Pre-Flight (6) first.
+
+  **Fail:**
+  - Window count unchanged → NB03 read old rr_clean → confirm Step 4 completed and rr_clean counts increased.
+  - NaN in features → ectopic removal produced empty windows → check rr_clean for that patient.
+
+  **Git Checkpoint:**
+  ```bash
+  git add data/processed/infant*_features.csv data/processed/infant*_labels.csv
+  git commit -m "step 5: rebuild features and labels CSVs from full recordings"
+  ```
+
+---
+
+- [ ] 🟥 **Step 6: Rebuild NB04 — update label alignment to use `first_r_peak_absolute`** — *Critical: fixes the coordinate mismatch*
+
+  **Idempotent:** Yes — overwrites all windowed CSVs.
+
+  **Context:** NB04 Cell 2 currently builds `cumulative_pos = np.cumsum(rr_samples)` anchored at 0. It must be updated to `cumulative_pos = first_r_peak_absolute + np.cumsum(rr_samples)` to match annotation coordinates. `first_r_peaks.csv` written in Step 4 provides these values.
+
+  **Pre-Read Gate (execute before any edits; abort if failed):**
+  ```bash
+  grep -c 'TRIM_OFFSETS' scripts/generate_nb04.py
+  grep -c 'cumulative_pos = np.cumsum' scripts/generate_nb04.py
+  grep -n -A2 -B2 'Trim offsets' scripts/generate_nb04.py
+  ```
+  Both counts must be exactly 1. The last command shows context — the insertion point is inside the `cell1 = """..."""` string. The closing `"""` ends the Python triple-quoted string literal; do not search for it in the file as a standalone token.
+
+  **Changes to make in `scripts/generate_nb04.py`:**
+
+  **cell1 —** The file contains `cell1 = """..."""`. Insert the block *after* `print(f"Trim offsets:  {TRIM_OFFSETS}")` and *inside* that same cell1 string (not after its closing `"""` — the closing delimiter ends the Python literal; do not insert there). Find this substring inside the cell1 content (lines ~43–46):
+  ```python
+  print(f"PROCESSED_DIR: {PROCESSED_DIR}")
+  print(f"LOOKBACK:      {LOOKBACK} windows")
+  print(f"Patients:      {PATIENTS}")
+  print(f"Trim offsets:  {TRIM_OFFSETS}")
+  ```
+  Insert the following block immediately after the Trim offsets line:
+  ```python
+
+  # Load first R-peak absolute positions — written by NB02 (Step 4)
+  frp_df         = pd.read_csv(PROCESSED_DIR / "first_r_peaks.csv")
+  FIRST_R_PEAKS  = dict(zip(frp_df["record_name"], frp_df["first_r_peak_absolute"].astype(int)))
+  print(f"First R-peaks: {FIRST_R_PEAKS}")
+  ```
+  Result: cell1 string ends with `print(f"Trim offsets:  {TRIM_OFFSETS}")\n\n# Load first...\nprint(f"First R-peaks: {FIRST_R_PEAKS}")"""`.
+
+  **cell2 —** Find this block:
+  ```python
+    rr_samples     = rr_ms / 1000.0 * FS_ECG
+    cumulative_pos = np.cumsum(rr_samples)
+  ```
+  Replace with (use `[patient_id]` not `.get(patient_id, 0)` — missing patient must raise, not silently anchor at 0):
+  ```python
+    rr_samples          = rr_ms / 1000.0 * FS_ECG
+    first_r_peak_abs    = FIRST_R_PEAKS[patient_id]
+    cumulative_pos      = first_r_peak_abs + np.cumsum(rr_samples)
+  ```
+
+  Also update the trim-offset guard print line to include `first_r_peak_abs`:
+  ```python
+  print(f"  {patient_id}: {len(labels_df)} annotations -> "
+        f"{len(labelled_windows)} labelled windows "
+        f"(dropped_prefix={dropped_prefix}, dropped_range={dropped_range}, "
+        f"trim_offset={trim_offset}, first_r_peak_abs={first_r_peak_abs})")
+  ```
+
+  **cell4 —** Add a pre-run guard so the job fails fast if any patient is missing (instead of producing partial output and aborting mid-loop). Find:
+  ```python
+  all_patients = []
+
+  for patient_id in PATIENTS:
+  ```
+  Replace with:
+  ```python
+  missing = [p for p in PATIENTS if p not in FIRST_R_PEAKS]
+  assert not missing, f"first_r_peaks.csv missing: {missing}"
+
+  all_patients = []
+
+  for patient_id in PATIENTS:
+  ```
+
+  Then regenerate the notebook and run it. **Canonical runner:** `python scripts/run_nb04.py` (verified in Pre-Flight (6)). Use nbconvert only if run_nb04.py is missing.
+  ```bash
+  python scripts/generate_nb04.py
+
+  python scripts/run_nb04.py
+  ```
+  If run_nb04.py fails (exit non-zero): try `jupyter nbconvert --to notebook --execute notebooks/04_baseline_deviation.ipynb --output 04_executed.ipynb 2>&1 | tail -40`.
+
+  **✓ Verification Test (run immediately after execute; do not defer to Step 7):**
+  ```bash
+  python -c "
+  import pandas as pd
+  from pathlib import Path
+  combined = pd.read_csv(Path('data/processed') / 'all_patients_windowed.csv')
+  total_pos = combined['label'].sum()
+  per_patient = combined.groupby('record_name')['label'].sum()
+  n_patients_with_pos = (per_patient > 0).sum()
+  print(f'Total pos labels: {total_pos} (was 2), patients with pos: {n_patients_with_pos}')
+  assert total_pos > 10, f'Only {total_pos} positive labels — alignment broken'
+  assert n_patients_with_pos >= 3, f'Only {n_patients_with_pos} patients have pos labels — fix Step 6'
+  assert combined.isnull().sum().sum() == 0, 'NaN in combined'
+  print('Step 6 label alignment OK')
+  "
+  ```
+  Pass: total_pos > 10, n_patients_with_pos >= 3. Fail: re-check FIRST_R_PEAKS[patient_id], cumulative_pos formula.
+
+  **Human Gate:**
+  Paste the full per-patient output showing `labelled_windows` counts.
+
+  Output `"[WAITING: NB04 rebuild output showing per-patient label counts]"` as the final line.
+  Do not write any code after this line. Do not call any tools after this line.
+
+  **Git Checkpoint:**
+  ```bash
+  git add scripts/generate_nb04.py notebooks/04_baseline_deviation.ipynb
+  git commit -m "step 6: anchor cumulative_pos to first_r_peak_absolute in NB04"
+  ```
+
+---
+
+### Phase 4 — Verify Label Alignment
+
+---
+
+- [ ] 🟥 **Step 7: Verify label alignment is fixed** — *Critical: confirms the root cause is resolved*
 
   **Idempotent:** Yes — read-only.
 
   **Action:**
   ```bash
+  # trim_offsets.csv was built by extract_trim_offsets.py (sampto=500000). infant5's flat prefix
+  # ends at ~364,000 samples, well within 500k, so the value is correct and does not need rebuilding.
+  python -c "
+  import pandas as pd
+  df = pd.read_csv('data/processed/trim_offsets.csv')
+  print(df.to_string(index=False))
+  i5 = df[df.record_name == 'infant5']
+  assert len(i5) == 1 and i5['start_idx_samples'].iloc[0] > 0, 'infant5 must have non-zero trim offset (~364k expected)'
+  "
+
   python -c "
   import pandas as pd
   from pathlib import Path
 
   combined = pd.read_csv(Path('data/processed') / 'all_patients_windowed.csv')
-  print('Combined shape:   ', combined.shape)
-  print('Overall pos rate: ', f\"{combined['label'].mean():.2%}\")
+  print('Combined shape:  ', combined.shape)
+  print('Total pos labels:', combined['label'].sum(), '(was 2)')
   print()
-  print('Per-patient summary:')
-  for p, grp in combined.groupby('record_name'):
-      print(f'  {p}: {len(grp)} windows, pos={grp.label.sum()}, '
-            f'pos_rate={grp.label.mean():.1%}')
+  print('Positive labels per patient (all should be > 0 except possibly infant5):')
+  per_patient = combined.groupby('record_name')['label'].sum().sort_values()
+  print(per_patient)
+  total_pos = combined['label'].sum()
+  assert total_pos > 10, f'Still only {total_pos} positive labels — alignment broken'
+  n_patients_with_pos = (per_patient > 0).sum()
+  assert n_patients_with_pos >= 3, f'Only {n_patients_with_pos} patients have positive labels — expect 3+ if alignment works'
+  assert combined.isnull().sum().sum() == 0, 'NaN in combined'
   print()
-  print('Feature deviation stats (all patients):')
-  dev_cols = [c for c in combined.columns if c.endswith('_dev')]
-  print(combined[dev_cols].describe().round(3))
+  print('Label alignment fix confirmed OK')
   "
   ```
 
-  **What to look for:**
-  - Deviation scores centred near 0 with std ≈ 1 for most features. If std > 5 for any feature → rolling baseline is computing on too few windows.
-  - Positive rate 5–20% across the combined set — expected for rare bradycardia.
-  - infant5 may show `pos=0` if all its annotations fall in the trimmed prefix even after offset correction — document but do not treat as error.
-  - Last-window label density: `min(beat_idx // STEP_SIZE, n_windows - 1)` clamps all late-recording annotations to the final window. Patients with many annotations at recording end (e.g. infant9 with 97) may show artificially high pos rate at window `n_windows - 1` — document for NB05 interpretation.
+  **Pass:** Total positive labels > 10 across all patients (expect 50+), zero NaN.
+
+  **Fail:**
+  - Still 2 positive labels → `first_r_peak_absolute` not applied → re-check Step 6 changes in `generate_nb04.py`.
+  - Positive labels exist but count is suspiciously low → run diagnostic:
+    ```bash
+    python -c "
+    import pandas as pd, numpy as np
+    from pathlib import Path
+    PROC, FS = Path('data/processed'), 500
+    trim = dict(zip(pd.read_csv(PROC/'trim_offsets.csv')['record_name'],
+                    pd.read_csv(PROC/'trim_offsets.csv')['start_idx_samples'].astype(int)))
+    frp = dict(zip(pd.read_csv(PROC/'first_r_peaks.csv')['record_name'],
+                   pd.read_csv(PROC/'first_r_peaks.csv')['first_r_peak_absolute'].astype(int)))
+    for p in ['infant1','infant7']:
+        rr = pd.read_csv(PROC/f'{p}_rr_clean.csv')['rr_ms'].values
+        lab = pd.read_csv(PROC/f'{p}_labels.csv')
+        cum = frp[p] + np.cumsum(rr/1000*FS)
+        print(f'{p}: cum_pos={cum.min():.0f}..{cum.max():.0f}, ann={lab.sample_idx.min()}..{lab.sample_idx.max()}, trim={trim.get(p,0)}')
+    "
+    ```
 
   **Git Checkpoint:**
   ```bash
   git add data/processed/infant*_windowed.csv \
           data/processed/all_patients_windowed.csv
-  git commit -m "step 4: add notebook 04 windowed CSV outputs"
+  git commit -m "step 7: verified label alignment fixed — full pipeline rebuild complete"
   ```
-
----
-
-- [ ] 🟥 **Step 5: Regression guard — confirm upstream CSVs untouched** — *Non-critical*
-
-  **Idempotent:** Yes — read-only.
-
-  **Action:**
-  ```bash
-  python -c "
-  import pandas as pd, glob
-
-  # Feature CSVs unchanged
-  for f in sorted(glob.glob('data/processed/*_features.csv')):
-      df = pd.read_csv(f)
-      assert df.isnull().sum().sum() == 0, f'{f}: NaN introduced'
-      print(f.split('/')[-1], df.shape, 'OK')
-
-  # Label CSVs unchanged
-  for f in sorted(glob.glob('data/processed/*_labels.csv')):
-      df = pd.read_csv(f)
-      assert list(df.columns) == ['sample_idx','symbol'], f'{f}: columns changed'
-      print(f.split('/')[-1], df.shape, 'OK')
-
-  # rr_clean CSVs unchanged
-  for f in sorted(glob.glob('data/processed/infant*_rr_clean.csv')):
-      df = pd.read_csv(f)
-      assert list(df.columns) == ['rr_ms'], f'{f}: columns changed'
-      print(f.split('/')[-1], df.shape, 'OK')
-  "
-  ```
-
-  **Pass:** All print OK. No shape or column changes from pre-flight baseline.
-
-  **Fail:** Any shape mismatch → a step wrote to the wrong file → check git diff for unintended changes.
 
 ---
 
@@ -694,29 +867,38 @@ Step 5 (Regression guard)         — Non-critical  — verification only — Id
 
 | System | Pre-change behaviour | Post-change verification |
 |--------|---------------------|--------------------------|
-| `*_features.csv` | 9 columns, no NaN, shape unchanged | Step 5 shape + NaN check |
-| `*_labels.csv` | 2 columns `sample_idx, symbol`, row counts unchanged | Step 5 column + shape check |
-| `*_rr_clean.csv` | 1 column `rr_ms`, row counts unchanged | Step 5 column + shape check |
-| NB03 PATIENTS | All 10 infants | `grep PATIENTS notebooks/03_hrv_extraction.ipynb` |
+| `rr_clean.csv` row counts | ~700–5125 beats (truncated) | Step 4: all counts must be greater |
+| `features.csv` window counts | 27–122 windows (truncated) | Step 5: all counts must be greater |
+| `labels.csv` | Unchanged — annotations are from wfdb, not recomputed | Row counts must be identical to pre-fix |
+| `windowed.csv` positive labels | 2 total across 451 windows | Step 7: must be > 10 |
+| Simulated rr_clean CSVs | 10 simulated files untouched | `ls data/processed/simulated_*` must still show 10 |
 
 ---
 
 ## Rollback Procedure
 
 ```bash
-# Rollback NB04 outputs:
-rm -f data/processed/*_windowed.csv
-rm -f data/processed/all_patients_windowed.csv
-rm -f data/processed/trim_offsets.csv
-rm -f notebooks/04_baseline_deviation.ipynb
-rm -f scripts/extract_trim_offsets.py
-rm -f scripts/generate_nb04.py
-rm -f scripts/run_nb04.py
+# This plan modifies source code — rollback via git
+git revert HEAD~1  # Step 7
+git revert HEAD~1  # Step 6
+git revert HEAD~1  # Step 5
+git revert HEAD~1  # Step 4
 
-# Confirm upstream outputs untouched:
-ls data/processed/*_features.csv   # must show 10 files
-ls data/processed/*_labels.csv     # must show 10 files
-ls data/processed/*_rr_clean.csv   # must show 10 real + 10 simulated
+# Restore original truncated rr_clean CSVs from git
+git checkout HEAD~4 -- data/processed/infant*_rr_clean.csv
+
+# Remove new files
+rm -f data/processed/first_r_peaks.csv
+rm -f logs/nb02_full_run.log
+rm -f logs/nb03_full_run.log
+
+# Confirm beat counts are back to truncated values
+python -c "
+import pandas as pd, glob
+for f in sorted(glob.glob('data/processed/infant*_rr_clean.csv')):
+    df = pd.read_csv(f)
+    print(f.split('/')[-1], len(df), 'beats')
+"
 ```
 
 ---
@@ -725,12 +907,13 @@ ls data/processed/*_rr_clean.csv   # must show 10 real + 10 simulated
 
 | Step | Risk | What Could Go Wrong | Early Detection | Idempotent |
 |------|------|---------------------|-----------------|------------|
-| Step 1 | 🟡 Medium | Trim window/threshold mismatches NB02 → wrong offset | Verify infant5 offset > 0 and plausible (~364000) | Yes |
-| Step 2 | 🟡 Medium | nbformat script fails silently | JSON validity check + 17-token assertion | Yes |
-| Step 3 | 🟡 Medium | infant5 still shows 0 pos labels despite fix | Human gate output — check dropped_prefix vs dropped_range | Yes |
-| Step 3 | 🔴 High | Warmup drop leaves infant5 with 0 rows | Zero-row assert in verification | Yes |
-| Step 3 | 🟢 Low | std=0 produces NaN | `assert nan_count == 0` per patient | Yes |
-| Step 4 | 🟢 Low | Deviation std wildly off | `describe()` output — check std ≈ 1 | Yes |
+| Step 1 | 🟡 Medium | NB02 Cell 1 edits not saved correctly | Token verification test | Yes |
+| Step 2 | 🟡 Medium | run_nb02_real.py still has sampto | Token verification test | Yes |
+| Step 3 | 🔴 High | infant1 OOM or takes >60min | `time` output — stop if >60min | Yes |
+| Step 4 | 🔴 High | Overnight run crashes mid-loop | `nohup` log monitoring | Yes |
+| Step 5 | 🟡 Medium | NB03 reads stale rr_clean | Window count assertion | Yes |
+| Step 6 | 🔴 High | first_r_peak_abs not anchoring correctly | Per-patient labelled_windows count in human gate | Yes |
+| Step 7 | 🟢 Low | Label count still low after fix | Assert > 10 positive labels | Yes |
 
 ---
 
@@ -738,29 +921,24 @@ ls data/processed/*_rr_clean.csv   # must show 10 real + 10 simulated
 
 | Deliverable | Target | Verification |
 |-------------|--------|--------------|
-| `trim_offsets.csv` | 10 rows, infant5 offset > 0 | Step 1 verification |
-| Per-patient windowed CSVs | `infant1..10_windowed.csv` in `data/processed/` | Step 3 verification |
-| Combined CSV | `all_patients_windowed.csv` in `data/processed/` | Step 3 verification |
-| Output schema | `record_name`, `window_idx`, 7 `*_dev` cols, `label` | Step 3 column assert |
-| Zero NaN | All CSVs NaN-free | Step 3 `assert nan_count == 0` |
-| Binary labels | `label` ∈ {0,1} only | Step 3 label assert |
-| Warmup dropped | `window_idx.min() == LOOKBACK` (10) in all outputs | Step 3 min assert |
-| Trim offset applied | infant5 has `n_pos >= 0`, dropped_prefix reported | Step 3 human gate |
-| Window formula correct | Labels fall in windows containing the event beat | Sanity plot — red dots at deviation spikes |
+| `rr_clean.csv` covers full recording | Beat counts >> truncated values | Step 4 assertion |
+| `first_r_peaks.csv` | 10 rows, all values > 0 | Step 4 assertion |
+| `features.csv` covers full recording | Window counts >> truncated values | Step 5 assertion |
+| Positive labels | > 10 across all patients (expect 50+) | Step 7 assertion |
+| Zero NaN | All windowed CSVs NaN-free | Step 7 assertion |
+| Compute time known | Documented from Step 3 timing | Step 3 human gate |
 
 ---
 
-## Decisions Log (carried from logic review)
+## Decisions Log
 
 | Decision | Resolution |
 |----------|-----------|
-| Window formula | `min(beat_idx // STEP_SIZE, n_windows - 1)` — replaces `(beat_idx - WINDOW_SIZE) // STEP_SIZE` |
-| Trim offset persistence | Written by `scripts/extract_trim_offsets.py` to `data/processed/trim_offsets.csv` |
-| Trim offset application | `adjusted_sample_idx = sample_idx - trim_offset` before cumulative comparison |
-| Annotations in trimmed prefix | `adjusted_sample_idx < 0` → `dropped_prefix` counter, silently dropped |
-| Warmup drop method | `iloc[LOOKBACK:]` — valid because `window_idx` confirmed contiguous from 0 |
-| std=0 guard | Deviation set to `0.0`, not NaN |
-| NaN guard | `assert nan_count == 0` hard-crashes per patient in Cell 3 |
+| Remove sampto | Both NB02 and run_nb02_real.py — remove entirely, not replace with larger value |
+| first_r_peak_absolute | Persisted to `data/processed/first_r_peaks.csv` |
+| Formula | `cumulative_pos = first_r_peak_abs + np.cumsum(rr_samples)` |
+| fs per-patient | Already handled in NB02 — `fs` read from record header, no change needed |
+| Test strategy | Run infant1 alone first, time it, then all 10 overnight |
 
 ---
 
@@ -768,3 +946,4 @@ ls data/processed/*_rr_clean.csv   # must show 10 real + 10 simulated
 ⚠️ **Do not proceed past a Human Gate without explicit human input.**
 ⚠️ **If blocked, mark 🟨 In Progress and output the State Manifest before stopping.**
 ⚠️ **Do not batch multiple steps into one git commit.**
+⚠️ **Step 4 is a long-running overnight job — do not wait for it interactively.**

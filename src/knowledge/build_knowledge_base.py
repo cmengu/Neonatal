@@ -12,7 +12,9 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(REPO_ROOT))
+
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -47,6 +49,9 @@ def parse_chunks(file_path: Path) -> list[dict]:
             category = meta_line.split("Category:")[1].split(".")[0].strip()
         if "Risk tier:" in meta_line:
             risk_tier = meta_line.split("Risk tier:")[1].strip().rstrip(".")
+        if not body:
+            logging.warning("Empty chunk body in %s — skipping", file_path.name)
+            continue
         parsed.append({"text": body, "category": category, "risk_tier": risk_tier})
     return parsed
 

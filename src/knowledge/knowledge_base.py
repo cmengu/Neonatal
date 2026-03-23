@@ -159,3 +159,59 @@ class ClinicalKnowledgeBase:
             with_payload=True,
         )
         return [r.payload["text"] for r in results.points]
+
+    def query_by_category(
+        self,
+        text: str,
+        categories: list[str],
+        n: int = 3,
+    ) -> list[str]:
+        """Hybrid retrieval filtered to specific KB categories (source files).
+
+        Used by specialist agents to retrieve only the chunks relevant to their
+        domain (e.g., signal specialist requests 'hrv_indicators' and
+        'sepsis_early_warning' only, not bradycardia or intervention chunks).
+
+        Parameters
+        ----------
+        text       : Free-text query from the specialist.
+        categories : One or more category strings. Qdrant OR-filters across them.
+                     Valid values: 'hrv_indicators', 'sepsis_early_warning',
+                     'bradycardia_patterns', 'intervention_thresholds',
+                     'baseline_interpretation'.
+        n          : Chunks to return after reranking.
+        """
+        dense_vec = self.dense_model.encode(text).tolist()
+        sp = self.tfidf.transform([text])
+        sparse_vec = SparseVector(
+            indices=sp.indices.tolist(),
+            values=sp.data.tolist(),
+        )
+
+        # OR filter: chunk category must match any of the requested categories.
+        category_filter = Filter(
+            should=[
+                FieldCondition(key="category", match=MatchValue(value=cat))
+                for cat in categories
+            ]
+        )
+
+        results = self.client.query_points(
+            collection_name="clinical_knowledge",
+            prefetch=[
+                Prefetch(query=dense_vec, using="dense", filter=category_filter, limit=10),
+                Prefetch(query=sparse_vec, using="sparse", filter=category_filter, limit=10),
+            ],
+            query=FusionQuery(fusion=Fusion.RRF),
+            limit=20,
+            with_payload=True,
+        )
+
+        candidates = [
+            {"id": str(r.id), "text": r.payload["text"]}
+            for r in results.points
+        ]
+        reranked = self.reranker.rerank(
+            RerankRequest(query=text, passages=candidates)
+        )
+        return [r["text"] for r in reranked[:n]]

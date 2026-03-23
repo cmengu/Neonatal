@@ -1,0 +1,50 @@
+{
+  "old_rr_beats": {
+    "infant5": 706,
+    "infant2": 1752,
+    "infant3": 1951,
+    "infant4": 2566,
+    "infant9": 2111,
+    "infant8": 2413,
+    "infant10": 2299,
+    "infant6": 2234,
+    "infant1": 5125,
+    "infant7": 2366
+  },
+  "old_windows": {
+    "infant6": 52,
+    "infant1": 122,
+    "infant7": 55,
+    "infant10": 54,
+    "infant9": 40,
+    "infant8": 59,
+    "infant5": 27,
+    "infant2": 38,
+    "infant3": 45,
+    "infant4": 59
+  },
+  "old_labels": {
+    "infant5": 72,
+    "infant8": 28,
+    "infant2": 72,
+    "infant10": 40,
+    "infant7": 34,
+    "infant4": 66,
+    "infant9": 97,
+    "infant1": 77,
+    "infant6": 56,
+    "infant3": 80
+  },
+  "old_labels_checksum": {
+    "infant5": "969b00655f6d50173e49e970c9c7350738e45de1cc75d1524aea98d7992070e4",
+    "infant8": "8865af4b635353fafccdffbbb21d9f45d493be87c3212cb90eb456256dc65297",
+    "infant2": "330d0bee58c423b30e8ba21428d9c1521db7ae2cff09ca604c5def610faaf4b0",
+    "infant10": "cb94f93f28633811d4eaaedaee84511f271c172b913ebeb03a70079979745b3e",
+    "infant7": "caca3dab7e84e79480d51277e8ba2d70522e42f433f092fdb127bef7a5a54915",
+    "infant4": "87fd5f8a580dcc185286922cf9aac6e29996b39b1c018fd21634c5ca7eb5115f",
+    "infant9": "b33a583f07b7922bbbbbe9bd46b49edeec773c68ed157b2d9d0ed57164344dd5",
+    "infant1": "40cb81a033e344470256d20f216002a1c98cdef96b62ab53dfe1ac30a1d629c1",
+    "infant6": "b9949a3edd05eba21d8bb4bc2d96747adc6a976d6a127bf8e0c9f2f4081edd8a",
+    "infant3": "acf73ca811dec7ec44415da89fc9c6511bb27b1cb0584e2bd4965aff6f5464c3"
+  }
+}

@@ -9,13 +9,11 @@ Sources: Fyfe et al. 2003, Goulding et al. 2015 (PMC), Longin et al. 2005.
 from __future__ import annotations
 
 import hashlib
-import sys
 from pathlib import Path
 
 import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(REPO_ROOT))
 
 from src.features.constants import HRV_FEATURE_COLS
 from src.pipeline.result import BradycardiaEvent, PipelineResult
@@ -67,6 +65,17 @@ _SEPSIS_SHIFT: dict[str, float] = {
     "rr_ms_min": +0.05, "rr_ms_max": +0.10,
     "rr_ms_25%": +0.06, "rr_ms_50%": +0.08, "rr_ms_75%": +0.09,
 }
+
+# Fail loudly at import time if HRV_FEATURE_COLS and _GA_PARAMS keys drift apart.
+# Both must enumerate the same 10 features; any mismatch produces a RuntimeError
+# that surfaces during tests rather than silently producing incomplete results.
+_GA_KEYS = set(next(iter(_GA_PARAMS.values())).keys())
+if set(HRV_FEATURE_COLS) != _GA_KEYS:
+    raise RuntimeError(
+        f"synthetic_generator: HRV_FEATURE_COLS {set(HRV_FEATURE_COLS)} "
+        f"does not match _GA_PARAMS keys {_GA_KEYS}. "
+        "Update one of src/features/constants.py or src/data/synthetic_generator.py."
+    )
 
 
 def generate_synthetic_result(

@@ -22,3 +22,6 @@ results/
 
 # Qdrant on-disk runtime lock (do not commit)
 qdrant_local/.lock
+
+# Claude Code local commands (not committed)
+.claude/
