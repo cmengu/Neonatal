@@ -9,7 +9,7 @@ NeonatalAlert:  The final alert object persisted to SQLite and returned by the g
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 APPROVED_ACTIONS = [
@@ -83,6 +83,7 @@ class NeonatalAlert(BaseModel):
     protocol_compliant: bool
     past_similar_events: int
     latency_ms: float | None = None
+    z_scores: dict[str, float] = Field(default_factory=dict)
 
 
 class SignalAssessment(BaseModel):

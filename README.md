@@ -75,11 +75,11 @@ flowchart TD
     G6 --> AUD
 
     subgraph API ["FastAPI Production Layer (Phase 7)"]
-        EP1[POST /assess/{id}<br/>blocking multi-agent]
-        EP2[GET /assess/{id}/stream<br/>SSE per-specialist progress]
-        EP3[GET /patient/{id}/history<br/>last N alerts]
-        EP4[POST /assess/{id}/generalist<br/>A/B comparison]
-        EP5[GET /health<br/>prediction distribution + KB chunk count]
+        EP1["POST /assess/{id}<br/>blocking multi-agent"]
+        EP2["GET /assess/{id}/stream<br/>SSE per-specialist progress"]
+        EP3["GET /patient/{id}/history<br/>last N alerts"]
+        EP4["POST /assess/{id}/generalist<br/>A/B comparison"]
+        EP5["GET /health<br/>prediction distribution + KB chunk count"]
     end
 
     AM --> EP1

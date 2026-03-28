@@ -23,6 +23,8 @@ export interface NeonatalAlert {
   protocol_compliant: boolean;
   past_similar_events: number;
   latency_ms: number | null;
+  /** Present on live API after schema update; omit on older backends. */
+  z_scores?: Record<string, number>;
 }
 
 /** Mirrors api/main.py patient_history SELECT columns. */

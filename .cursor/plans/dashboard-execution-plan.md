@@ -1,6 +1,6 @@
 # NeonatalGuard Dashboard — Execution Plan
 
-**Overall Progress:** `0% (0/7 steps complete)`
+**Overall Progress:** `100% (7/7 steps complete) — Pre-implemented before plan was written. All steps verified against actual codebase on 2026-03-24.`
 
 > **v2 — post pre-check.** All 5 critical flaws and 3 logic warnings from the pre-check pass resolved. See Decisions Log below.
 
@@ -122,7 +122,7 @@ Step 7 (Wire page.tsx + test) — Non-critical — verification only — Idempot
 
 ---
 
-- [ ] 🟥 **Step 1: Scaffold Next.js 14 project** — *Non-critical: creates new isolated directory, no existing code touched*
+- [x] 🟩 **Step 1: Scaffold Next.js 14 project** — *Non-critical: creates new isolated directory, no existing code touched*
 
   **Idempotent:** No — `create-next-app` fails if directory exists. Pre-flight confirms it does not.
 
@@ -226,11 +226,11 @@ Step 7 (Wire page.tsx + test) — Non-critical — verification only — Idempot
   ```
 
   **Subtasks:**
-  - [ ] 🟥 `create-next-app` runs without error
-  - [ ] 🟥 `tailwind.config.ts` (or `.js`) updated with `pulse-ring` keyframe
-  - [ ] 🟥 `globals.css` sets `height: 100%` on `html, body`
-  - [ ] 🟥 `layout.tsx` sets `className="h-full"` on both `<html>` and `<body>`
-  - [ ] 🟥 `page.tsx` emptied of default boilerplate
+  - [x] 🟩 `create-next-app` runs without error
+  - [x] 🟩 `tailwind.config.ts` (or `.js`) updated with `pulse-ring` keyframe
+  - [x] 🟩 `globals.css` sets `height: 100%` on `html, body`
+  - [x] 🟩 `layout.tsx` sets `className="h-full"` on both `<html>` and `<body>`
+  - [x] 🟩 `page.tsx` emptied of default boilerplate
 
   **✓ Verification Test:**
 
@@ -252,7 +252,7 @@ Step 7 (Wire page.tsx + test) — Non-critical — verification only — Idempot
 
 ---
 
-- [ ] 🟥 **Step 2: Types + mock data + API client** — *Critical: defines the data contract consumed by every component and hook*
+- [x] 🟩 **Step 2: Types + mock data + API client** — *Critical: defines the data contract consumed by every component and hook*
 
   **Idempotent:** Yes — creates new files in `lib/`, no existing files modified.
 
@@ -590,9 +590,9 @@ Step 7 (Wire page.tsx + test) — Non-critical — verification only — Idempot
   ```
 
   **Subtasks:**
-  - [ ] 🟥 `types.ts` written; `HRV_LABEL` keys match `HRV_FEATURE_COLS` from `constants.py`
-  - [ ] 🟥 `mock-data.ts` has exactly 10 entries (1 RED, 2 YELLOW, 7 GREEN); no unused variables
-  - [ ] 🟥 `api-client.ts` exports `getPatientAlert`, `getPatientHistory`, `getSystemHealth`
+  - [x] 🟩 `types.ts` written; `HRV_LABEL` keys match `HRV_FEATURE_COLS` from `constants.py`
+  - [x] 🟩 `mock-data.ts` has exactly 10 entries (1 RED, 2 YELLOW, 7 GREEN); no unused variables
+  - [x] 🟩 `api-client.ts` exports `getPatientAlert`, `getPatientHistory`, `getSystemHealth`
 
   **✓ Verification Test:**
 
@@ -620,7 +620,7 @@ Step 7 (Wire page.tsx + test) — Non-critical — verification only — Idempot
 
 ---
 
-- [ ] 🟥 **Step 3: ConcernBadge + BedCard** — *Non-critical: pure presentational, no side effects*
+- [x] 🟩 **Step 3: ConcernBadge + BedCard** — *Non-critical: pure presentational, no side effects*
 
   **Idempotent:** Yes — new files only.
 
@@ -683,6 +683,7 @@ Step 7 (Wire page.tsx + test) — Non-critical — verification only — Idempot
 
     return (
       <button
+        type="button"
         onClick={onClick}
         className={`
           relative w-full rounded-lg p-4 text-left transition-opacity hover:opacity-90 cursor-pointer
@@ -733,9 +734,9 @@ Step 7 (Wire page.tsx + test) — Non-critical — verification only — Idempot
   ```
 
   **Subtasks:**
-  - [ ] 🟥 `ConcernBadge` maps all three levels
-  - [ ] 🟥 `BedCard` applies `animate-pulse-ring` only when `concern_level === "RED"`
-  - [ ] 🟥 `CARD_BG` keys cover `RED`, `YELLOW`, `GREEN`
+  - [x] 🟩 `ConcernBadge` maps all three levels
+  - [x] 🟩 `BedCard` applies `animate-pulse-ring` only when `concern_level === "RED"`
+  - [x] 🟩 `CARD_BG` keys cover `RED`, `YELLOW`, `GREEN`
 
   **✓ Verification Test:**
 
@@ -753,7 +754,7 @@ Step 7 (Wire page.tsx + test) — Non-critical — verification only — Idempot
 
 ---
 
-- [ ] 🟥 **Step 4: WardGrid + StatusBar** — *Non-critical: layout components*
+- [x] 🟩 **Step 4: WardGrid + StatusBar** — *Non-critical: layout components*
 
   **Idempotent:** Yes — new files only.
 
@@ -871,9 +872,9 @@ Step 7 (Wire page.tsx + test) — Non-critical — verification only — Idempot
   ```
 
   **Subtasks:**
-  - [ ] 🟥 `WardGrid.tsx` has `"use client"` at top
-  - [ ] 🟥 `SEVERITY_ORDER` sorts RED=0, YELLOW=1, GREEN=2
-  - [ ] 🟥 `StatusBar` countdown renders as `MM:SS` via `pad()`
+  - [x] 🟩 `WardGrid.tsx` has `"use client"` at top
+  - [x] 🟩 `SEVERITY_ORDER` sorts RED=0, YELLOW=1, GREEN=2
+  - [x] 🟩 `StatusBar` countdown renders as `MM:SS` via `pad()`
 
   **✓ Verification Test:**
 
@@ -897,7 +898,7 @@ Step 7 (Wire page.tsx + test) — Non-critical — verification only — Idempot
 
 ---
 
-- [ ] 🟥 **Step 5: useWardData + usePatientHistory** — *Critical: all data flow, polling, and countdown state*
+- [x] 🟩 **Step 5: useWardData + usePatientHistory** — *Critical: all data flow, polling, and countdown state*
 
   **Idempotent:** Yes — new files only. Creates `dashboard/hooks/` directory.
 
@@ -1019,10 +1020,10 @@ Step 7 (Wire page.tsx + test) — Non-critical — verification only — Idempot
   ```
 
   **Subtasks:**
-  - [ ] 🟥 `dashboard/hooks/` directory exists with both files
-  - [ ] 🟥 `useWardData` initialises `countdown` at 90 and ticks down every second
-  - [ ] 🟥 `fetchAll` uses `Promise.allSettled`; partial failures don't prevent other patients rendering
-  - [ ] 🟥 `usePatientHistory` resets `history` to `[]` when `patientId` is null
+  - [x] 🟩 `dashboard/hooks/` directory exists with both files
+  - [x] 🟩 `useWardData` initialises `countdown` at 90 and ticks down every second
+  - [x] 🟩 `fetchAll` uses `Promise.allSettled`; partial failures don't prevent other patients rendering
+  - [x] 🟩 `usePatientHistory` resets `history` to `[]` when `patientId` is null
 
   **✓ Verification Test:**
 
@@ -1041,7 +1042,7 @@ Step 7 (Wire page.tsx + test) — Non-critical — verification only — Idempot
 
 ---
 
-- [ ] 🟥 **Step 6: PatientDrawer + AlertHistory** — *Non-critical: presentational drawer, Level 3+4 content*
+- [x] 🟩 **Step 6: PatientDrawer + AlertHistory** — *Non-critical: presentational drawer, Level 3+4 content*
 
   **Idempotent:** Yes — new files only.
 
@@ -1300,9 +1301,9 @@ Step 7 (Wire page.tsx + test) — Non-critical — verification only — Idempot
   ```
 
   **Subtasks:**
-  - [ ] 🟥 `<aside>` has `onClick={(e) => e.stopPropagation()}`
-  - [ ] 🟥 Recommended action callout is the first element in the scrollable body
-  - [ ] 🟥 `AlertHistory` renders "No previous alerts." when `history.length === 0`
+  - [x] 🟩 `<aside>` has `onClick={(e) => e.stopPropagation()}`
+  - [x] 🟩 Recommended action callout is the first element in the scrollable body
+  - [x] 🟩 `AlertHistory` renders "No previous alerts." when `history.length === 0`
 
   **✓ Verification Test:**
 
@@ -1326,7 +1327,7 @@ Step 7 (Wire page.tsx + test) — Non-critical — verification only — Idempot
 
 ---
 
-- [ ] 🟥 **Step 7: Wire page.tsx + create .env.local + final build** — *Non-critical: wires existing parts*
+- [x] 🟩 **Step 7: Wire page.tsx + create .env.local + final build** — *Non-critical: wires existing parts*
 
   **Idempotent:** Yes — replaces the placeholder `page.tsx` from Step 1.
 
@@ -1383,9 +1384,9 @@ Step 7 (Wire page.tsx + test) — Non-critical — verification only — Idempot
   ```
 
   **Subtasks:**
-  - [ ] 🟥 `page.tsx` is `"use client"`
-  - [ ] 🟥 `.env.local` created with `NEXT_PUBLIC_USE_REAL_API=false`
-  - [ ] 🟥 `.env.local` is gitignored (not staged, not committed)
+  - [x] 🟩 `page.tsx` is `"use client"`
+  - [x] 🟩 `.env.local` created with `NEXT_PUBLIC_USE_REAL_API=false`
+  - [x] 🟩 `.env.local` is gitignored (not staged, not committed)
 
   **✓ Verification Test:**
 

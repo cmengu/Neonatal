@@ -104,6 +104,57 @@ export function PatientDrawer({ alert, onClose }: PatientDrawerProps) {
             </div>
           </div>
 
+          {Object.keys(alert.z_scores ?? {}).length > 0 && (
+            <div>
+              <p className="text-xs text-slate-500 uppercase tracking-wider mb-2">
+                HRV Deviations from Baseline
+              </p>
+              <div className="space-y-1.5">
+                {Object.entries(alert.z_scores ?? {})
+                  .sort(([, a], [, b]) => Math.abs(b) - Math.abs(a))
+                  .slice(0, 5)
+                  .map(([feature, z]) => {
+                    const label = HRV_LABEL[feature] ?? feature.toUpperCase();
+                    const direction = z > 0 ? "↑" : "↓";
+                    const magnitude = Math.abs(z);
+                    const barColor =
+                      magnitude > 2.5
+                        ? "bg-red-500"
+                        : magnitude > 1.5
+                          ? "bg-amber-400"
+                          : "bg-slate-500";
+                    return (
+                      <div key={feature} className="flex items-center gap-2">
+                        <span className="text-slate-400 text-xs w-24 shrink-0">
+                          {label}
+                        </span>
+                        <div className="flex-1 h-1 rounded-full bg-slate-800 overflow-hidden">
+                          <div
+                            className={`h-full rounded-full ${barColor}`}
+                            style={{
+                              width: `${Math.min(magnitude / 4, 1) * 100}%`,
+                            }}
+                          />
+                        </div>
+                        <span
+                          className={`text-xs font-mono w-16 text-right ${
+                            magnitude > 2.5
+                              ? "text-red-400"
+                              : magnitude > 1.5
+                                ? "text-amber-400"
+                                : "text-slate-400"
+                          }`}
+                        >
+                          {direction} z={z > 0 ? "+" : ""}
+                          {z.toFixed(1)}
+                        </span>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          )}
+
           <div>
             <p className="text-xs text-slate-500 uppercase tracking-wider mb-2">
               Clinical Reasoning

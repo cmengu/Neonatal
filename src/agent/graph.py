@@ -310,6 +310,7 @@ def assemble_alert_node(state: AgentState) -> dict:
         self_check_passed=state.get("self_check_passed", True),
         protocol_compliant="PROTOCOL FLAG" not in llm_out.recommended_action,
         past_similar_events=len(state.get("past_alerts") or []),
+        z_scores=result.z_scores,
     )
 
     EpisodicMemory().save(

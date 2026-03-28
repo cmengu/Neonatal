@@ -41,7 +41,7 @@ export async function getSystemHealth(): Promise<"ok" | "degraded"> {
     if (!res.ok) return "degraded";
     const data = await res.json();
     return data.qdrant === "ok" ? "ok" : "degraded";
-  } catch (_e) {
+  } catch {
     return "degraded";
   }
 }
