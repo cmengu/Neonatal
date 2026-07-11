@@ -53,6 +53,18 @@ def test_assess_generalist_returns_concern_level():
     assert data["concern_level"] in ("RED", "YELLOW", "GREEN")
 
 
+def test_assess_cascade_returns_verdict():
+    """Cascade endpoint returns a Verdict with a valid concern level and the tier trail."""
+    r = client.post("/assess/infant1/cascade")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["level"] in ("RED", "YELLOW", "GREEN")
+    assert data["patient_id"] == "infant1"
+    assert data["safety_floor"] in ("RED", "YELLOW", "GREEN")
+    assert len(data["assessments"]) >= 1
+    assert data["assessments"][0]["source"] == "deviation"
+
+
 def test_history_empty_for_unknown_patient():
     """History endpoint returns [] for a patient with no alert history."""
     r = client.get("/patient/PATIENT_THAT_DOES_NOT_EXIST_XYZ/history")
