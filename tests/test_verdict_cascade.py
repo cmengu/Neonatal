@@ -71,3 +71,46 @@ def test_floor_regression_property_is_the_ci_gate():
             FakeAssessor(other_l, "other"),
         ])
         assert c.assess(_ctx()).level >= floor_l
+
+
+# --- #4: Tier 2 (temporal) composition -----------------------------------------
+
+
+def test_tier2_temporal_cannot_lower_below_floor():
+    # ADR-0001: Tier 2 may de-escalate down to — never below — the Safety Floor.
+    # A calm temporal tier does not quiet a YELLOW deviation floor.
+    c = VerdictCascade(tiers=[
+        FakeAssessor(ConcernLevel.YELLOW, "deviation"),
+        FakeAssessor(ConcernLevel.GREEN, "temporal"),
+    ])
+    v = c.assess(_ctx())
+    assert v.level == ConcernLevel.YELLOW
+    assert v.safety_floor == ConcernLevel.YELLOW
+
+
+def test_tier2_temporal_can_escalate_a_drift_above_the_floor():
+    # A Drift the instantaneous floor missed: deviation GREEN, temporal YELLOW -> YELLOW.
+    c = VerdictCascade(tiers=[
+        FakeAssessor(ConcernLevel.GREEN, "deviation"),
+        FakeAssessor(ConcernLevel.YELLOW, "temporal"),
+    ])
+    v = c.assess(_ctx())
+    assert v.level == ConcernLevel.YELLOW
+    assert "temporal" in v.escalated_by
+
+
+def test_real_temporal_drift_escalates_the_verdict_before_the_floor_trips():
+    """End-to-end with the real Tier 1 + Tier 2: a sustained sub-floor drift makes the
+    cascade escalate before any single window crosses the instantaneous floor."""
+    from src.assessment.cusum import CusumThresholds, TemporalAssessor
+    from src.assessment.deviation import DeviationAssessor
+
+    cascade = VerdictCascade(tiers=[
+        DeviationAssessor(),
+        TemporalAssessor(thresholds=CusumThresholds(h=2.0)),
+    ])
+    drift = AssessmentContext(patient_id="t", z_scores={"sdnn": -1.5, "rmssd": -1.5})
+    escalated = any(cascade.assess(drift).level != ConcernLevel.GREEN for _ in range(100))
+    assert escalated
+    # ...and the deviation floor on that window is GREEN (nothing reached |z|>=2).
+    assert DeviationAssessor().assess(drift).level == ConcernLevel.GREEN

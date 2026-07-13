@@ -3,10 +3,17 @@
 Runs the tiers, takes the Safety Floor from the deviation tier, and merges into a
 single Verdict. Per ADR-0001 the Verdict is never below the floor.
 
-Ticket #2 wires one tier (Deviation), so composition is: verdict = the floor, and
-any tier may escalate above it. The *asymmetric de-escalation* half of ADR-0001
-(Tier 2 may lower to the floor; Tier 3 may not) lands with the CUSUM / RAG tickets —
-this module is structured so those slot in without a rewrite.
+Composition (ADR-0001): the verdict is never below the Safety Floor (Tier 1's
+deterministic minimum), and any tier may escalate above it. As of #4 the second tier
+is real — the deterministic CUSUM ``TemporalAssessor`` (``source="temporal"``) — so a
+gradual Drift now escalates the verdict even when no single window trips the floor.
+
+The floor rule already encodes the *safe* half of ADR-0001's asymmetric de-escalation:
+a temporal Assessment *below* the floor is clamped up to it (Tier 2 may quiet down to —
+never below — the floor). The *stronger* half — Tier 2 overriding a Tier 3 escalation
+downward while Tier 3 stays escalate-only — is deliberately deferred to #5, when Tier 3
+(RAG) exists and it becomes testable; building it now, against no Tier 3, would be
+speculative and unverifiable. This module is structured so that lands without a rewrite.
 """
 from __future__ import annotations
 

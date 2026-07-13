@@ -51,6 +51,26 @@ DEFAULT_DIRECTIONS: dict[str, Direction] = {
 _RISK_SATURATION = 3.0
 
 
+def pathological_magnitude(
+    directions: Mapping[str, Direction], feature: str, z: float
+) -> float:
+    """How far ``feature``'s z-score deviates *in its pathological direction*.
+
+    Returns 0.0 for a display-only feature (absent from ``directions``) or one that
+    deviates the *reassuring* way. This is the single definition of direction-awareness
+    (issue #8), shared by the Tier 1 floor and the Tier 2 CUSUM composite so the two
+    tiers agree on what "pathological" means.
+    """
+    direction = directions.get(feature)
+    if direction == "low":
+        return max(0.0, -z)
+    if direction == "high":
+        return max(0.0, z)
+    if direction == "both":
+        return abs(z)
+    return 0.0
+
+
 @dataclass(frozen=True)
 class DeviationThresholds:
     """The one config for the deterministic floor. Frozen so it's a safe default arg.
@@ -81,14 +101,7 @@ class DeviationAssessor:
     def _pathological_magnitude(self, feature: str, z: float) -> float:
         """How far ``feature`` deviates in its pathological direction (0.0 if it is not a
         trigger feature or deviates the reassuring way)."""
-        direction = self._t.directions.get(feature)
-        if direction == "low":
-            return max(0.0, -z)
-        if direction == "high":
-            return max(0.0, z)
-        if direction == "both":
-            return abs(z)
-        return 0.0
+        return pathological_magnitude(self._t.directions, feature, z)
 
     def assess(self, context: AssessmentContext) -> Assessment:
         triggered = [

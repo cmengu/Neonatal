@@ -10,6 +10,13 @@ Public surface:
 from src.assessment.assessor import Assessor
 from src.assessment.cascade import VerdictCascade
 from src.assessment.context import load_context
+from src.assessment.cusum import (
+    CusumThresholds,
+    InMemoryCusumStore,
+    SqliteCusumStore,
+    TemporalAssessor,
+    composite_deviation,
+)
 from src.assessment.deviation import DeviationAssessor, DeviationThresholds
 from src.assessment.types import (
     Assessment,
@@ -24,6 +31,11 @@ __all__ = [
     "VerdictCascade",
     "DeviationAssessor",
     "DeviationThresholds",
+    "TemporalAssessor",
+    "CusumThresholds",
+    "InMemoryCusumStore",
+    "SqliteCusumStore",
+    "composite_deviation",
     "load_context",
     "Assessment",
     "AssessmentContext",
