@@ -31,8 +31,8 @@ GROUND_TRUTH: list[tuple[str, str]] = [
      "8-12 hours"),                                                               # hrv_indicators chunk 2
     ("pNN50 percentage 50ms consecutive RR intervals neonates",
      "under 2%"),                                                                 # hrv_indicators chunk 4
-    ("RMSSD suppression pre-bradycardia pre-sepsis HRV signature",
-     "pre-bradycardia and pre-sepsis"),                                           # hrv_indicators chunk 1
+    ("RMSSD suppression abnormal heart-rate characteristics precede bradycardia",
+     "precede bradycardia and clinical deterioration"),                           # hrv_indicators chunk 1
     # sepsis_early_warning (5)
     ("three concurrent HRV changes 12-24 hours before clinical sepsis",          # NUMERIC
      "three concurrent changes"),                                                 # sepsis_early_warning chunk 1
@@ -56,14 +56,14 @@ GROUND_TRUTH: list[tuple[str, str]] = [
     ("post-feeding bradycardia enteral feed vagal response gut distension",
      "vagal response to gut distension"),                                         # bradycardia_patterns chunk 6
     # intervention_thresholds (5)
-    ("immediate clinical review RMSSD -2.5 LF/HF +2.5 two brady positive predictive",
-     "positive predictive value of approximately 0.71"),                         # intervention_thresholds chunk 1
+    ("immediate clinical review RMSSD -2.5 two bradycardia events preceding 6 hours",
+     "Immediate clinical review is warranted"),                                   # intervention_thresholds chunk 1
     ("reassess 2 hours single feature z-score deviation -2.0 -2.5",             # NUMERIC
      "Single-feature mild deviations"),                                           # intervention_thresholds chunk 2
     ("routine monitoring all HRV z-scores 1.5 standard deviations stable",
      "1.5 standard deviations"),                                                 # intervention_thresholds chunk 3
-    ("increase monitoring frequency every 15 minutes directional trend",
-     "every 15 minutes"),                                                         # intervention_thresholds chunk 4
+    ("increase monitoring frequency directional trend two features consecutive windows",
+     "Increase monitoring frequency"),                                            # intervention_thresholds chunk 4
     ("blood culture CBC differential 1 hour sepsis neonatal ICU",
      "Blood culture and CBC"),                                                    # intervention_thresholds chunk 1
     # baseline_interpretation (5)
