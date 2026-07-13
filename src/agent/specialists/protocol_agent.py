@@ -32,7 +32,7 @@ _HIGH_ACUITY_ACTIONS = {
 # Actions appropriate for GREEN patients.
 _ROUTINE_ACTIONS = {
     "continue routine monitoring",
-    "reassess in 2 hours",
+    "continue observation",
     "increase monitoring frequency",
 }
 

@@ -10,15 +10,23 @@ from src.assessment.types import Assessment, AssessmentContext, ConcernLevel
 
 
 class FakeAssessor:
-    """An Assessor that always returns a fixed Assessment — satisfies the Protocol."""
+    """An Assessor that always returns a fixed Assessment — satisfies the Protocol.
+
+    Exposes ``source`` on the object too (not just in the Assessment), so the cascade
+    can identify a ``"rag"`` tier structurally and skip it without invoking. ``called``
+    records whether ``assess`` ran — used to prove the Tier 3 short-circuit.
+    """
 
     def __init__(self, level: ConcernLevel, source: str, risk: float = 0.5):
+        self.source = source
+        self.called = False
         self._a = Assessment(
             level=level, risk=risk, confidence=0.9,
             rationale="fake assessment for testing purposes", source=source,
         )
 
     def assess(self, context: AssessmentContext) -> Assessment:
+        self.called = True
         return self._a
 
 
@@ -114,3 +122,64 @@ def test_real_temporal_drift_escalates_the_verdict_before_the_floor_trips():
     assert escalated
     # ...and the deviation floor on that window is GREEN (nothing reached |z|>=2).
     assert DeviationAssessor().assess(drift).level == ConcernLevel.GREEN
+
+
+# --- #5: Tier 3 (RAG) escalate-only + short-circuit -----------------------------
+
+
+def test_rag_is_skipped_when_base_is_green():
+    """Short-circuit: the expensive Tier 3 is not invoked when the merged Tier 1/Tier 2
+    level is GREEN — even though the rag fake *would* have said RED."""
+    rag = FakeAssessor(ConcernLevel.RED, "rag")
+    c = VerdictCascade(tiers=[FakeAssessor(ConcernLevel.GREEN, "deviation"), rag])
+    v = c.assess(_ctx())
+    assert v.level == ConcernLevel.GREEN
+    assert rag.called is False  # never invoked on a clean window
+    assert "rag" not in [a.source for a in v.assessments]
+
+
+def test_rag_runs_and_escalates_when_base_is_non_green():
+    """When Tier 1/Tier 2 are non-GREEN, Tier 3 runs and may raise concern."""
+    rag = FakeAssessor(ConcernLevel.RED, "rag")
+    c = VerdictCascade(tiers=[FakeAssessor(ConcernLevel.YELLOW, "deviation"), rag])
+    v = c.assess(_ctx())
+    assert rag.called is True
+    assert v.level == ConcernLevel.RED
+    assert "rag" in v.escalated_by
+
+
+def test_rag_cannot_lower_below_the_floor_escalate_only():
+    """Escalate-only: a rag GREEN can never talk a YELLOW floor down. The LLM tier is
+    trusted to raise concern but never to suppress it (ADR-0001 / ADR-0003)."""
+    rag = FakeAssessor(ConcernLevel.GREEN, "rag")
+    c = VerdictCascade(tiers=[FakeAssessor(ConcernLevel.YELLOW, "deviation"), rag])
+    v = c.assess(_ctx())
+    assert rag.called is True  # floor is non-GREEN, so Tier 3 does run
+    assert v.level == ConcernLevel.YELLOW  # ...but its GREEN is discarded
+    assert v.safety_floor == ConcernLevel.YELLOW
+
+
+def test_rag_cannot_lower_a_temporal_escalation():
+    """ADR-0003 fork: Tier 2 does not quiet Tier 3, and Tier 3 does not quiet Tier 2.
+    A temporal YELLOW stands even when the rag tier returns GREEN."""
+    rag = FakeAssessor(ConcernLevel.GREEN, "rag")
+    c = VerdictCascade(tiers=[
+        FakeAssessor(ConcernLevel.GREEN, "deviation"),
+        FakeAssessor(ConcernLevel.YELLOW, "temporal"),
+        rag,
+    ])
+    v = c.assess(_ctx())
+    assert rag.called is True  # merged base is YELLOW → Tier 3 runs
+    assert v.level == ConcernLevel.YELLOW
+
+
+def test_rag_escalate_only_holds_across_all_combinations():
+    """Property: for every (floor, rag) pair, the rag tier never lowers the verdict below
+    the floor — the escalate-only invariant, the Tier-3 analogue of the FNR=0 gate."""
+    levels = [ConcernLevel.GREEN, ConcernLevel.YELLOW, ConcernLevel.RED]
+    for floor_l, rag_l in itertools.product(levels, repeat=2):
+        c = VerdictCascade(tiers=[
+            FakeAssessor(floor_l, "deviation"),
+            FakeAssessor(rag_l, "rag"),
+        ])
+        assert c.assess(_ctx()).level >= floor_l

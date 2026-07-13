@@ -195,7 +195,7 @@ def llm_reasoning_node(state: AgentState) -> dict:
                 recommended_action=(
                     "Immediate clinical review"
                     if r.risk_level == "RED"
-                    else "Reassess in 2 hours"
+                    else "Increase monitoring frequency"
                     if r.risk_level == "YELLOW"
                     else "Continue routine monitoring"
                 ),
