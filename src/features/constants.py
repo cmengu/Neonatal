@@ -25,3 +25,17 @@ HRV_FEATURE_COLS = [
     "rr_ms_50%",
     "rr_ms_75%",
 ]
+
+# Ordered column names for the respiration-derived cardiorespiratory feature
+# stream produced by ``src.features.respiration.compute_respiration_features()``
+# (issue #3). Kept as the single source of truth exactly like HRV_FEATURE_COLS.
+# The keys returned by compute_respiration_features() must stay in sync with this
+# list; ``tests/test_respiration_features.py`` asserts the invariant.
+RESP_FEATURE_COLS = [
+    "resp_rate_bpm",       # detected respiration-peak rate over the window (breaths/min)
+    "breath_interval_cv",  # respiratory variability: CV of inter-breath intervals
+    "n_breaths",           # breath-peak count in the window
+    "apnea_count",         # apnea episodes (>= APNEA_MIN_PAUSE_S) overlapping the window
+    "apnea_seconds",       # total apnea-overlap seconds within the window
+    "longest_apnea_s",     # longest single apnea overlap within the window
+]
