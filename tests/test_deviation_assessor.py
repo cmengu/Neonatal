@@ -62,9 +62,25 @@ def test_low_variability_deviation_is_red_eligible():
 
 
 def test_high_only_feature_triggers_up_not_down():
-    # rr_ms_max encodes the deceleration tail: long RR (high) is pathological, short is not.
-    assert DeviationAssessor().assess(_ctx({"rr_ms_max": 4.0})).level == ConcernLevel.YELLOW
-    assert DeviationAssessor().assess(_ctx({"rr_ms_max": -4.0})).level == ConcernLevel.GREEN
+    # sample_asymmetry encodes the deceleration burden: a rising R2/R1 (high) is
+    # pathological (#13), a falling one (fewer decelerations) is not.
+    assert DeviationAssessor().assess(_ctx({"sample_asymmetry": 4.0})).level == ConcernLevel.YELLOW
+    assert DeviationAssessor().assess(_ctx({"sample_asymmetry": -4.0})).level == ConcernLevel.GREEN
+
+
+def test_sampen_is_low_only():
+    # #13: sample entropy *falls* before sepsis (loss of complex autonomic modulation),
+    # so a low deviation is pathological; a high-entropy outlier is reassuring.
+    assert DeviationAssessor().assess(_ctx({"sampen": -4.0})).level == ConcernLevel.YELLOW
+    assert DeviationAssessor().assess(_ctx({"sampen": 4.0})).level == ConcernLevel.GREEN
+
+
+def test_cold_start_nan_sampen_does_not_trigger():
+    # Before the ~4096-interval entropy window fills, sampen is NaN. It must be
+    # treated as non-deviating — never a spurious trigger (bounded delay, not omission).
+    a = DeviationAssessor().assess(_ctx({"sampen": float("nan"), "rmssd": -2.5}))
+    assert a.level == ConcernLevel.YELLOW  # only rmssd counts; NaN sampen is inert
+    assert 0.0 <= a.risk <= 1.0  # NaN did not corrupt the risk scalar
 
 
 def test_mean_rr_is_two_sided():
@@ -86,11 +102,28 @@ def test_two_concordant_low_features_reach_red():
     assert a.level == ConcernLevel.RED
 
 
-def test_variability_collapse_plus_deceleration_tail_is_concordant_red():
-    # Low variability (low sdnn) + the deceleration tail (high rr_ms_max) are the two
-    # halves of the same sepsis signature — concordant on the pathology, so RED.
-    a = DeviationAssessor().assess(_ctx({"sdnn": -2.5, "rr_ms_max": 3.0}))
+def test_variability_collapse_plus_deceleration_burden_is_concordant_red():
+    # Low variability (low sdnn) + the deceleration burden (high sample_asymmetry) are
+    # the two halves of the same sepsis signature — concordant on the pathology, so RED.
+    a = DeviationAssessor().assess(_ctx({"sdnn": -2.5, "sample_asymmetry": 3.0}))
     assert a.level == ConcernLevel.RED
+
+
+def test_hero_signature_reduced_variability_with_decelerations_is_red():
+    # The single most-validated neonatal-sepsis phenomenon (#13): reduced variability
+    # (low sdnn/sampen) *together with* transient decelerations (high sample_asymmetry)
+    # → concordant RED. Any one of the three alone still caps at YELLOW.
+    hero = _ctx({"sdnn": -2.4, "sampen": -2.6, "sample_asymmetry": 2.8})
+    assert DeviationAssessor().assess(hero).level == ConcernLevel.RED
+    assert DeviationAssessor().assess(_ctx({"sampen": -6.0})).level == ConcernLevel.YELLOW
+    assert DeviationAssessor().assess(_ctx({"sample_asymmetry": 6.0})).level == ConcernLevel.YELLOW
+
+
+def test_retired_rr_proxies_no_longer_trigger():
+    # #13 retired rr_ms_max / rr_ms_75% as triggers (folded into sample_asymmetry + SDNN).
+    # They are display-only now — even an extreme pair stays GREEN.
+    a = DeviationAssessor().assess(_ctx({"rr_ms_max": 6.0, "rr_ms_75%": 6.0}))
+    assert a.level == ConcernLevel.GREEN
 
 
 # --- #8: feature cleanup -------------------------------------------------------

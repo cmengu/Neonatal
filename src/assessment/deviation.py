@@ -9,12 +9,15 @@ Per issue #8 the rule is **direction-aware** and **concordance-gated**, because
 (docs/research/hrv-features-neonatal-validity.md):
 
 - Only a deviation in the *pathological* direction counts. In impending sepsis
-  variability collapses (low ``sdnn``/``rmssd``) and decelerations lengthen the RR tail
-  (high ``rr_ms_max``/``rr_ms_75%``); a *high*-variability outlier is reassuring, not a
-  risk (Griffin & Moorman 2001, PMID 11134441; Fairchild & O'Shea 2010, PMID 20813272).
+  variability collapses (low ``sdnn``/``rmssd``/``sampen``) and the deceleration burden
+  of the RR histogram rises (high ``sample_asymmetry``); a *high*-variability outlier is
+  reassuring, not a risk (Griffin & Moorman 2001, PMID 11134441; Fairchild & O'Shea 2010,
+  PMID 20813272; Kovatchev 2003, PMID 12930915).
 - Contested / adult-band / floor-effect features (``lf_hf_ratio``, ``rr_ms_min``,
-  ``rr_ms_50%``, ``pnn50``) are removed from the *trigger* set — they may stay in the
-  context for display but never drive the floor (Billman 2013; Moorman 2011).
+  ``rr_ms_50%``, ``pnn50``) and the retired crude RR-tail proxies (``rr_ms_max``,
+  ``rr_ms_75%`` — superseded by ``sample_asymmetry`` in #13) are removed from the
+  *trigger* set — they may stay in the context for display but never drive the floor
+  (Billman 2013; Moorman 2011; Kovatchev 2003).
 - Concordance: one pathological feature caps at YELLOW; **>=2** concordant features are
   needed for RED — the ``max``-over-co-equal rule inflated false positives.
 
@@ -25,6 +28,7 @@ real outcome data is a config change, not a rewrite.
 """
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Literal
@@ -38,11 +42,22 @@ Direction = Literal["low", "high", "both"]
 #   low  -> variability collapse is the sepsis signature
 #   high -> the deceleration tail (long RR intervals)
 #   both -> genuinely bidirectional (tachycardia = short RR, or decel/brady = long RR)
+#
+# Issue #13 upgraded the RR-domain triggers to the neonatally-validated HeRO
+# discriminators and retired the crude proxies (docs/research/cardiorespiratory-
+# feature-validation.md, gate #10):
+#   - sampen (low-only): the nonlinear irregularity measure that *falls* before
+#     sepsis — the correct replacement for the role lf_hf_ratio was wrongly given.
+#   - sample_asymmetry (high-only): the whole-histogram deceleration-burden R2/R1
+#     statistic that *rises* before sepsis (Kovatchev 2003, PMID 12930915).
+#   - rr_ms_max / rr_ms_75% are retired as triggers — a single order statistic is
+#     an artifact-fragile proxy; their intent folds into sample_asymmetry (R2) + SDNN.
+#     They remain in HRV_FEATURE_COLS for display only.
 DEFAULT_DIRECTIONS: dict[str, Direction] = {
     "sdnn": "low",
     "rmssd": "low",
-    "rr_ms_max": "high",
-    "rr_ms_75%": "high",
+    "sampen": "low",
+    "sample_asymmetry": "high",
     "mean_rr": "both",
 }
 
@@ -62,6 +77,11 @@ def pathological_magnitude(
     tiers agree on what "pathological" means.
     """
     direction = directions.get(feature)
+    # A non-finite z (e.g. cold-start SampEn before its ~4096-interval window has
+    # filled → NaN) is treated as non-deviating: it must neither trigger the floor
+    # nor corrupt the Tier-2 composite / risk max. Bounded delay, never omission.
+    if direction is None or not math.isfinite(z):
+        return 0.0
     if direction == "low":
         return max(0.0, -z)
     if direction == "high":
