@@ -111,8 +111,8 @@ async def _sse_generator(patient_id: str):
             if name == "supervisor":
                 pr = output.get("pipeline_result")
                 if pr:
-                    payload["risk_score"] = pr.risk_score
-                    payload["risk_level"] = pr.risk_level
+                    payload["risk"] = pr.risk
+                    payload["risk_level"] = pr.level
 
             elif name == "signal":
                 sa = output.get("signal_assessment")
@@ -190,7 +190,7 @@ def patient_history(patient_id: str, n: int = 10) -> list[dict]:
         with sqlite3.connect(str(DB_PATH)) as conn:
             rows = conn.execute(
                 """
-                SELECT timestamp, concern_level, risk_score,
+                SELECT timestamp, concern_level, risk,
                        top_feature, top_z_score,
                        signal_pattern, brady_classification, agent_version
                 FROM alert_history
@@ -203,7 +203,7 @@ def patient_history(patient_id: str, n: int = 10) -> list[dict]:
         cols = [
             "timestamp",
             "concern_level",
-            "risk_score",
+            "risk",
             "top_feature",
             "top_z_score",
             "signal_pattern",

@@ -55,3 +55,26 @@ def load_context(patient_id: str) -> AssessmentContext:
         hrv_values=hrv_values,
         detected_events=detected_events,
     )
+
+
+def personal_baseline(patient_id: str) -> dict[str, dict[str, float]]:
+    """Per-infant baseline mean/std for each HRV feature, over that infant's own history.
+
+    Used only to *display* the baseline the deviations are measured against (in the RAG
+    prompts + ``get_top_deviated``); it never drives routing — the personalised z-scores in
+    the context already carry the deviation. Replaces the old ONNX pipeline's LOOKBACK-window
+    ``personal_baseline`` with a simple whole-record per-feature mean/std.
+    """
+    feat_path = _PROCESSED / f"{patient_id}_features.csv"
+    if not feat_path.exists():
+        return {}
+    feat_df = pd.read_csv(feat_path)
+    baseline: dict[str, dict[str, float]] = {}
+    for col in HRV_FEATURE_COLS:
+        if col in feat_df.columns:
+            series = feat_df[col]
+            baseline[col] = {
+                "mean": float(series.mean()),
+                "std": float(series.std() or 1.0),
+            }
+    return baseline

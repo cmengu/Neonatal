@@ -27,14 +27,15 @@ from src.agent.specialists.brady_agent import brady_agent_node
 from src.agent.specialists.clinical_agent import clinical_agent_node
 from src.agent.specialists.protocol_agent import protocol_agent_node
 from src.agent.specialists.signal_agent import signal_agent_node
-from src.pipeline.result import PipelineResult
+from src.agent.state import AssessmentView
+from src.assessment.runtime import build_view_for_patient
 
 
 class MultiAgentState(TypedDict):
     """State schema for the multi-agent graph."""
 
     patient_id: str
-    pipeline_result: Optional[PipelineResult]
+    pipeline_result: Optional[AssessmentView]
     run_brady: Optional[bool]  # routing flag set by supervisor_node
     rag_context: Optional[list[str]]  # kept for compat with assemble_alert_node
     signal_assessment: Optional[SignalAssessment]
@@ -48,24 +49,18 @@ class MultiAgentState(TypedDict):
 
 @traceable(name="supervisor_node")
 def supervisor_node(state: dict) -> dict:
-    """Run the ONNX pipeline and determine specialist routing.
+    """Build the deterministic Tier-1 view and determine specialist routing.
 
-    Sets run_brady=True if bradycardia events present OR any z-score abs > 2.0.
-    This mirrors the project plan routing logic exactly.
+    Post-#7 the view comes from ``build_view_for_patient`` (``load_context`` + stateless
+    Tier-1 ``DeviationAssessor``), not the retired ONNX pipeline. Tier-2 CUSUM is not run
+    here — it composes once at the cascade (CUSUM-once invariant).
+
+    Sets run_brady=True if bradycardia-suggestive windows present OR any z-score abs > 2.0.
     """
-    synthetic = os.environ.get("_SYNTHETIC_RESULT")
-    if synthetic:
-        import pickle
-        try:
-            result = pickle.loads(bytes.fromhex(synthetic))
-        except Exception as exc:
-            raise RuntimeError(f"_SYNTHETIC_RESULT could not be deserialised: {exc}") from exc
-    else:
-        from src.pipeline.runner import NeonatalPipeline
-        result = NeonatalPipeline().run(state["patient_id"])
+    result = build_view_for_patient(state["patient_id"])
 
     max_z = max(abs(z) for z in result.z_scores.values()) if result.z_scores else 0.0
-    run_brady = len(result.detected_events) > 0 or max_z > 2.0
+    run_brady = result.n_events > 0 or max_z > 2.0
     past = EpisodicMemory().get_recent(state["patient_id"], n=7)
 
     return {
@@ -97,7 +92,7 @@ def assemble_multi_node(state: dict) -> dict:
         patient_id=result.patient_id,
         timestamp=datetime.now(),
         concern_level=llm_out.concern_level,
-        risk_score=result.risk_score,
+        risk=result.risk,
         primary_indicators=llm_out.primary_indicators,
         clinical_reasoning=llm_out.clinical_reasoning,
         recommended_action=llm_out.recommended_action,

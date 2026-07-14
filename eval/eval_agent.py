@@ -1,31 +1,25 @@
-"""NeonatalGuard agent eval runner.
+"""NeonatalGuard **routing-gate** runner (issue #7).
+
+⚠️ ROUTING / PLUMBING gate — NOT a clinical-accuracy metric. It drives the real
+``VerdictCascade`` with fake per-tier ``Assessor``s (``eval/scenarios.py``) and checks the
+composed ``Verdict`` level against the cascade rules (Safety Floor, escalate-only, GREEN
+short-circuit, ADR-0003 gated quiet). The old runner invoked the LangGraph agent with an
+ONNX-derived ``risk_score`` injected via ``_SYNTHETIC_RESULT`` — #7 retired both, so there is
+no ONNX, no Groq, no Qdrant, and no env-var pickle here.
 
 Usage:
-  python eval/eval_agent.py --no-llm
-  python eval/eval_agent.py --no-llm --fail-below-f1 0.80 --fail-above-fnr 0.0
-  python eval/eval_agent.py                            # live LLM — requires GROQ_API_KEY
-  python eval/eval_agent.py --agent multi_agent        # Phase 6 only
+  python eval/eval_agent.py --fail-below-f1 0.80 --fail-above-fnr 0.0
+  python eval/eval_agent.py --no-llm ...    # --no-llm accepted (no-op) for CI compatibility
 
-CI invocation (from .github/workflows/eval.yml):
+CI invocation (.github/workflows/eval.yml):
   python eval/eval_agent.py --no-llm --fail-below-f1 0.80 --fail-above-fnr 0.0
-
-Known side effect: assemble_alert_node writes one row to data/audit.db per scenario
-(EpisodicMemory.save). Harmless in no-LLM mode (rule-based path ignores past_alerts).
-Each scenario has a unique patient_id so cross-scenario history contamination cannot occur.
 """
+import argparse
 import json
 import os
 import sys
 import time
-import argparse
 from pathlib import Path
-
-# Must set EVAL_NO_LLM BEFORE importing src.agent.graph.
-# graph.py calls _build_groq_client() at module import time when EVAL_NO_LLM is not set.
-# Doing this here (before the REPO_ROOT sys.path insert) is safe because
-# os.environ is process-global and does not depend on the import order.
-if "--no-llm" in sys.argv:
-    os.environ["EVAL_NO_LLM"] = "1"
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -34,144 +28,91 @@ if str(REPO_ROOT) not in sys.path:
 import numpy as np
 from sklearn.metrics import f1_score
 
-from eval.scenarios import SCENARIOS, inject_scenario, clear_injection
+from eval.scenarios import SCENARIOS, build_cascade, context_for
 
 LABELS = ["RED", "YELLOW", "GREEN"]
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="NeonatalGuard agent eval runner")
+    p = argparse.ArgumentParser(description="NeonatalGuard cascade routing-gate runner")
     p.add_argument("--no-llm", action="store_true",
-                   help="Set EVAL_NO_LLM=1 before importing graph (must also be in sys.argv)")
-    p.add_argument("--fail-below-f1",  type=float, default=None, metavar="F",
+                   help="Accepted for CI compatibility; the routing gate never calls an LLM.")
+    p.add_argument("--fail-below-f1", type=float, default=None, metavar="F",
                    help="Exit 1 if macro F1 < F")
     p.add_argument("--fail-above-fnr", type=float, default=None, metavar="R",
                    help="Exit 1 if FNR(RED) > R")
-    p.add_argument("--agent", choices=["agent", "multi_agent"], default="agent",
-                   help="Which agent to evaluate (default: agent; multi_agent requires Phase 5)")
     p.add_argument("--output", type=str,
                    default=str(REPO_ROOT / "results" / "eval_agent.json"),
                    help="Output path for JSON results")
     return p.parse_args()
 
 
-def load_agent(name: str):
-    """Import the requested agent graph from src.agent.graph."""
-    if name == "agent":
-        from src.agent.graph import agent
-        return agent
-    elif name == "multi_agent":
-        try:
-            from src.agent.graph import multi_agent
-            return multi_agent
-        except ImportError:
-            sys.exit(
-                "ERROR: multi_agent not found in src.agent.graph. "
-                "Build Phase 5 first."
-            )
+def run_eval() -> dict:
+    """Compose every scenario through the real cascade and collect predicted verdict levels."""
+    y_true: list[str] = []
+    y_pred: list[str] = []
+    latencies_ms: list[float] = []
 
-
-def run_eval(run_agent) -> dict:
-    """Run all 30 scenarios and collect predictions + latencies."""
-    y_true:         list[str]   = []
-    y_pred:         list[str]   = []
-    protocol_flags: list[bool]  = []
-    latencies_ms:   list[float] = []
-
-    for i, scenario in enumerate(SCENARIOS):
-        inject_scenario(scenario)
+    for i, s in enumerate(SCENARIOS):
         try:
             t0 = time.perf_counter()
-            state = run_agent.invoke({"patient_id": scenario.patient_id})
+            verdict = build_cascade(s).assess(context_for(s))
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
-
-            alert = state.get("final_alert")
-            if alert is None:
-                pred = "ERROR"
-                protocol_ok = False
-                print(f"  [{i+1:02d}] {scenario.patient_id}: ERROR — final_alert is None in state")
-            else:
-                pred = alert.concern_level
-                protocol_ok = alert.protocol_compliant
-                match = "✓" if pred == scenario.expected else "✗"
-                print(
-                    f"  [{i+1:02d}] {scenario.patient_id}: "
-                    f"expected={scenario.expected} got={pred} {match}  "
-                    f"{elapsed_ms:.0f}ms"
-                )
-
+            pred = verdict.level.value
+            match = "✓" if pred == s.expected else "✗"
+            print(f"  [{i+1:02d}] {s.patient_id}: expected={s.expected} got={pred} {match}  {elapsed_ms:.1f}ms")
         except Exception as exc:
             elapsed_ms = (time.perf_counter() - t0) * 1000.0 if "t0" in locals() else 0.0
             pred = "ERROR"
-            protocol_ok = False
-            print(f"  [{i+1:02d}] {scenario.patient_id}: EXCEPTION — {exc}")
-
+            print(f"  [{i+1:02d}] {s.patient_id}: EXCEPTION — {exc}")
         finally:
-            clear_injection()
-            y_true.append(scenario.expected)
+            y_true.append(s.expected)
             y_pred.append(pred)
-            protocol_flags.append(protocol_ok)
             latencies_ms.append(elapsed_ms)
 
-    # Macro F1 — only over valid predictions (exclude "ERROR" rows)
-    valid_mask  = [p in LABELS for p in y_pred]
-    valid_true  = [t for t, ok in zip(y_true,  valid_mask) if ok]
-    valid_pred  = [p for p, ok in zip(y_pred,  valid_mask) if ok]
-    f1 = float(f1_score(
-        valid_true, valid_pred,
-        average="macro", labels=LABELS, zero_division=0
-    )) if valid_pred else 0.0
+    valid = [p in LABELS for p in y_pred]
+    vt = [t for t, ok in zip(y_true, valid) if ok]
+    vp = [p for p, ok in zip(y_pred, valid) if ok]
+    f1 = float(f1_score(vt, vp, average="macro", labels=LABELS, zero_division=0)) if vp else 0.0
 
-    # FNR (RED): missed RED / total RED
-    n_red  = sum(1 for t in y_true if t == "RED")
+    n_red = sum(1 for t in y_true if t == "RED")
     missed = sum(1 for t, p in zip(y_true, y_pred) if t == "RED" and p != "RED")
-    fnr    = missed / n_red if n_red > 0 else 0.0
+    fnr = missed / n_red if n_red > 0 else 0.0
 
-    # FNR (RED, hard scenarios only) — Phase 5 improvement target
-    hard_pairs = [(t, p) for s, t, p in zip(SCENARIOS, y_true, y_pred) if "HARD" in s.patient_id]
-    n_hard_red = sum(1 for t, _ in hard_pairs if t == "RED")
-    missed_hard_red = sum(1 for t, p in hard_pairs if t == "RED" and p != "RED")
+    hard = [(t, p) for s, t, p in zip(SCENARIOS, y_true, y_pred) if "HARD" in s.patient_id]
+    n_hard_red = sum(1 for t, _ in hard if t == "RED")
+    missed_hard_red = sum(1 for t, p in hard if t == "RED" and p != "RED")
     fnr_hard = missed_hard_red / n_hard_red if n_hard_red > 0 else 0.0
 
-    protocol  = sum(protocol_flags) / len(protocol_flags)
-    lat_arr   = sorted(latencies_ms)
-    p50       = float(np.percentile(lat_arr, 50)) if lat_arr else 0.0
-    p95       = float(np.percentile(lat_arr, 95)) if lat_arr else 0.0
-    n_correct = sum(t == p for t, p in zip(y_true, y_pred))
-
+    lat = sorted(latencies_ms)
     return {
-        "n_scenarios":         len(SCENARIOS),
-        "n_correct":           n_correct,
-        "f1":                  f1,
-        "fnr_red":             fnr,
-        "fnr_hard":            fnr_hard,
-        "protocol_compliance": protocol,
-        "latency_p50_ms":      p50,
-        "latency_p95_ms":      p95,
-        "no_llm_mode":         os.getenv("EVAL_NO_LLM", "") in {"1", "true", "yes"},
-        "y_true":              y_true,
-        "y_pred":              y_pred,
+        "gate_type": "routing/plumbing (cascade composition) — NOT clinical accuracy",
+        "n_scenarios": len(SCENARIOS),
+        "n_correct": sum(t == p for t, p in zip(y_true, y_pred)),
+        "f1": f1,
+        "fnr_red": fnr,
+        "fnr_hard": fnr_hard,
+        "latency_p50_ms": float(np.percentile(lat, 50)) if lat else 0.0,
+        "latency_p95_ms": float(np.percentile(lat, 95)) if lat else 0.0,
+        "y_true": y_true,
+        "y_pred": y_pred,
     }
 
 
 def main() -> None:
     args = parse_args()
-    mode = "EVAL_NO_LLM=1 (rule-based)" if os.getenv("EVAL_NO_LLM", "") in {"1", "true", "yes"} \
-           else "LIVE LLM (Groq)"
-
-    print(f"\nNeonatalGuard Eval — {len(SCENARIOS)} scenarios — mode: {mode}")
+    print(f"\nNeonatalGuard Routing Gate — {len(SCENARIOS)} scenarios (cascade composition)")
+    print("  NOTE: plumbing/routing gate, NOT a clinical-accuracy metric.")
     print("-" * 60)
 
-    run_agent = load_agent(args.agent)
-    results   = run_eval(run_agent)
+    results = run_eval()
 
     print("-" * 60)
-    print(f"F1 (macro):          {results['f1']:.3f}")
-    print(f"FNR (RED):           {results['fnr_red']:.3f}")
-    print(f"FNR (RED, hard):     {results['fnr_hard']:.3f}")
-    print(f"Protocol compliance: {results['protocol_compliance'] * 100:.1f}%")
-    print(f"Latency p50 / p95:   {results['latency_p50_ms']:.0f}ms / {results['latency_p95_ms']:.0f}ms")
-    print(f"Correct:             {results['n_correct']}/{results['n_scenarios']}")
+    print(f"F1 (macro):        {results['f1']:.3f}")
+    print(f"FNR (RED):         {results['fnr_red']:.3f}")
+    print(f"FNR (RED, hard):   {results['fnr_hard']:.3f}")
+    print(f"Latency p50 / p95: {results['latency_p50_ms']:.1f}ms / {results['latency_p95_ms']:.1f}ms")
+    print(f"Correct:           {results['n_correct']}/{results['n_scenarios']}")
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)

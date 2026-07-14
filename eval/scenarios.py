@@ -1,166 +1,131 @@
-"""30-scenario eval suite for NeonatalGuard.
+"""Scenarios for the NeonatalGuard **routing gate** (issue #7).
 
-Each Scenario maps to a deterministic PipelineResult injected into the
-LangGraph agent via the _SYNTHETIC_RESULT env var mechanism in graph.py.
+⚠️ This is a ROUTING / PLUMBING gate, **not** a clinical-accuracy metric. Each scenario
+injects fake per-tier ``Assessment`` levels into the real ``VerdictCascade`` and asserts the
+*composed* ``Verdict`` level. It verifies the cascade wiring — Safety-Floor composition
+(ADR-0001), the HARD/SOFT two-level floor + gated quiet (ADR-0003/#14), Tier-3 escalate-only,
+and the GREEN short-circuit (#5) — **not** whether any tier is clinically correct. The old
+version derived the expected label from an ONNX ``risk_score`` (circular) and injected a
+synthetic ``PipelineResult`` via the ``_SYNTHETIC_RESULT`` env-var pickle; #7 retired both.
 
-RED   scenarios: risk_score > 0.70 — rule-based path returns RED unconditionally.
-YELLOW scenarios: risk_score 0.41–0.69 — rule-based path returns YELLOW.
-GREEN  scenarios: risk_score ≤ 0.40 — rule-based path returns GREEN.
-
-In EVAL_NO_LLM=1 mode, llm_reasoning_node returns concern_level = r.risk_level
-(derived from risk_score via level_from_score). FNR=0.000 is guaranteed for RED.
+Injection is now at the ``Assessor`` seam: a ``FakeAssessor`` per tier (the pattern from
+``tests/test_verdict_cascade.py``), so no ONNX, no Groq, no Qdrant, no env-var pickle.
 """
 from __future__ import annotations
 
-import os
-import pickle
-import sys
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Literal
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+from src.assessment.cascade import VerdictCascade
+from src.assessment.types import Assessment, AssessmentContext, ConcernLevel
 
-from src.features.constants import HRV_FEATURE_COLS
-from src.pipeline.result import BradycardiaEvent, PipelineResult
 
-# Fixed 28-32wk premature neonate baseline used for all scenarios.
-# Scenario z_scores are deviations FROM these values.
-# Sources: Fyfe 2003, Longin 2005 — same as synthetic_generator.py.
-_BASELINE_MEANS: dict[str, float] = {
-    "mean_rr":   432.0, "sdnn":   18.0, "rmssd":  12.0, "pnn50":    2.5,
-    "lf_hf_ratio": 1.5,
-    "rr_ms_min": 380.0, "rr_ms_max": 490.0,
-    "rr_ms_25%": 422.0, "rr_ms_50%": 432.0, "rr_ms_75%": 442.0,
-    # HeRO discriminators (#13): SampEn ~1.2 in healthy preterm HRV (falls before sepsis);
-    # sample_asymmetry ~1.0 at baseline (median-ref R2/R1 ratio; >1 = decel-heavy).
-    "sampen": 1.2, "sample_asymmetry": 1.0,
-}
-_BASELINE_STDS: dict[str, float] = {
-    "mean_rr":    30.0, "sdnn":   6.0, "rmssd":   4.0, "pnn50":   1.2,
-    "lf_hf_ratio": 0.5,
-    "rr_ms_min":  28.0, "rr_ms_max":  35.0,
-    "rr_ms_25%":  24.0, "rr_ms_50%":  28.0, "rr_ms_75%": 24.0,
-    "sampen": 0.3, "sample_asymmetry": 0.2,
-}
+class FakeAssessor:
+    """A deterministic tier stub — returns a fixed level for a given ``source``.
+
+    Mirrors the ``FakeAssessor`` seam pattern in the unit tests: it lets the eval drive the
+    real cascade composition without invoking any tier's real machinery (ONNX/LLM/Qdrant).
+    """
+
+    def __init__(
+        self,
+        source: str,
+        level: ConcernLevel,
+        *,
+        soft_floor: bool = False,
+        may_quiet: bool = False,
+    ) -> None:
+        self.source = source
+        self._level = level
+        self._soft_floor = soft_floor
+        self._may_quiet = may_quiet
+
+    def assess(self, context: AssessmentContext) -> Assessment:
+        return Assessment(
+            level=self._level,
+            risk=1.0 if self._level == ConcernLevel.RED else 0.5,
+            confidence=1.0,
+            rationale=f"[routing-gate fake] {self.source} → {self._level.value}",
+            source=self.source,
+            soft_floor=self._soft_floor,
+            may_quiet=self._may_quiet,
+        )
 
 
 @dataclass
 class Scenario:
-    """One eval scenario — defines a PipelineResult and its expected classification."""
+    """One routing-gate scenario: the per-tier levels to inject and the expected verdict.
+
+    ``floor``/``temporal``/``rag`` are the levels the (faked) Tier-1/2/3 report; ``expected``
+    is the composed ``Verdict`` level the cascade must produce. ``soft_floor``/``may_quiet``
+    exercise the ADR-0003 gated-quiet path.
+    """
+
     patient_id: str
-    risk_score: float
-    z_scores: dict[str, float]      # Key deviating features only; remaining default to 0.0
-    n_brady: int
-    expected: Literal["RED", "YELLOW", "GREEN"]
+    floor: str
+    temporal: str
+    rag: str
+    expected: str
     desc: str
+    soft_floor: bool = False
+    may_quiet: bool = False
 
 
-def build_pipeline_result(s: Scenario) -> PipelineResult:
-    """Construct a PipelineResult from a Scenario using the fixed 28-32wk baseline."""
-    full_z = {feat: s.z_scores.get(feat, 0.0) for feat in HRV_FEATURE_COLS}
-    hrv_values = {
-        feat: _BASELINE_MEANS[feat] + full_z[feat] * _BASELINE_STDS[feat]
-        for feat in HRV_FEATURE_COLS
-    }
-    personal_baseline = {
-        feat: {"mean": _BASELINE_MEANS[feat], "std": _BASELINE_STDS[feat]}
-        for feat in HRV_FEATURE_COLS
-    }
-    events = [
-        BradycardiaEvent(timestamp_idx=i * 100, rr_interval_ms=620.0, duration_beats=1)
-        for i in range(s.n_brady)
-    ]
-    return PipelineResult(
-        patient_id=s.patient_id,
-        risk_score=s.risk_score,
-        risk_level=PipelineResult.level_from_score(s.risk_score),
-        z_scores=full_z,
-        hrv_values=hrv_values,
-        personal_baseline=personal_baseline,
-        detected_events=events,
+def _lvl(name: str) -> ConcernLevel:
+    return ConcernLevel(name)
+
+
+def build_cascade(s: Scenario) -> VerdictCascade:
+    """A cascade wired with this scenario's three fake tiers (deviation / temporal / rag)."""
+    return VerdictCascade(
+        [
+            FakeAssessor("deviation", _lvl(s.floor), soft_floor=s.soft_floor),
+            FakeAssessor("temporal", _lvl(s.temporal), may_quiet=s.may_quiet),
+            FakeAssessor("rag", _lvl(s.rag)),
+        ]
     )
 
 
-def inject_scenario(s: Scenario) -> None:
-    """Serialise PipelineResult to hex and set _SYNTHETIC_RESULT env var for graph.py."""
-    result = build_pipeline_result(s)
-    os.environ["_SYNTHETIC_RESULT"] = pickle.dumps(result).hex()
+def context_for(s: Scenario) -> AssessmentContext:
+    """A minimal context — the fakes ignore its contents; only ``patient_id`` matters."""
+    return AssessmentContext(patient_id=s.patient_id)
 
 
-def clear_injection() -> None:
-    """Remove _SYNTHETIC_RESULT so the next invocation uses the real pipeline."""
-    os.environ.pop("_SYNTHETIC_RESULT", None)
-
-
-# fmt: off
+# 30 scenarios exercising the composition rules. Expected follows the CASCADE RULES, not any
+# risk score: verdict = max(effective_floor, temporal↑, rag↑); RAG skipped on a GREEN base;
+# HARD floor un-lowerable; SOFT floor quietable only when Tier-2 grants may_quiet.
 SCENARIOS: list[Scenario] = [
-    # RED (8) — risk_score > 0.70. Rule-based path returns RED. FNR=0.000 guaranteed.
-    Scenario("EVAL-RED-001", 0.87, {"rmssd": -3.2, "lf_hf_ratio": +2.9, "pnn50": -2.7, "sdnn": -1.8}, 3, "RED",    "Classic abnormal-HRC signature"),
-    Scenario("EVAL-RED-002", 0.82, {"rmssd": -2.8, "lf_hf_ratio": +2.5, "pnn50": -2.4, "sdnn": -2.1}, 2, "RED",    "Moderate abnormal HRC with 2 brady events"),
-    Scenario("EVAL-RED-003", 0.91, {"rmssd": -3.8, "lf_hf_ratio": +3.3, "pnn50": -3.1, "sdnn": -2.6}, 5, "RED",    "Severe HRV suppression"),
-    Scenario("EVAL-RED-004", 0.75, {"rmssd": -2.1, "lf_hf_ratio": +2.2, "pnn50": -1.9, "sdnn": -1.5}, 1, "RED",    "Borderline RED — just above threshold"),
-    Scenario("EVAL-RED-005", 0.93, {"rmssd": -4.1, "lf_hf_ratio": +3.8, "pnn50": -3.5, "sdnn": -3.0}, 6, "RED",    "Critical — extreme HRV collapse"),
-    Scenario("EVAL-RED-006", 0.79, {"rmssd": -2.5, "lf_hf_ratio": +2.0, "pnn50": -2.2, "sdnn": -1.7}, 0, "RED",    "RED without brady events — pure HRV signal"),
-    Scenario("EVAL-RED-007", 0.85, {"rmssd": -3.0, "lf_hf_ratio": +2.7, "pnn50": -2.5, "sdnn": -2.0}, 4, "RED",    "Multiple brady events"),
-    Scenario("EVAL-RED-008", 0.88, {"rmssd": -3.5, "lf_hf_ratio": +1.8, "pnn50": -2.8, "sdnn": -2.4}, 2, "RED",    "Dominant rmssd/pnn50 suppression"),
-    # YELLOW (8) — risk_score 0.41–0.69
-    Scenario("EVAL-YEL-001", 0.58, {"rmssd": -1.5, "lf_hf_ratio": +1.3, "pnn50": -1.2, "sdnn": -0.8}, 1, "YELLOW", "Moderate concern — borderline features"),
-    Scenario("EVAL-YEL-002", 0.65, {"rmssd": -1.8, "lf_hf_ratio": +1.6, "pnn50": -1.5, "sdnn": -1.1}, 1, "YELLOW", "Upper YELLOW — close to RED threshold"),
-    Scenario("EVAL-YEL-003", 0.42, {"rmssd": -0.9, "lf_hf_ratio": +0.8, "pnn50": -0.7, "sdnn": -0.5}, 0, "YELLOW", "Lower YELLOW — mild deviations"),
-    Scenario("EVAL-YEL-004", 0.61, {"rmssd": -1.6, "lf_hf_ratio": +1.4, "pnn50": -1.3, "sdnn": -0.9}, 2, "YELLOW", "YELLOW with brady events"),
-    Scenario("EVAL-YEL-005", 0.53, {"rmssd": -1.2, "lf_hf_ratio": +1.5, "pnn50": -1.0, "sdnn": -0.7}, 0, "YELLOW", "Sympathetic dominance"),
-    Scenario("EVAL-YEL-006", 0.48, {"rmssd": -1.0, "lf_hf_ratio": +1.1, "pnn50": -0.9, "sdnn": -0.6}, 1, "YELLOW", "Low YELLOW — one isolated event"),
-    Scenario("EVAL-YEL-007", 0.67, {"rmssd": -2.0, "lf_hf_ratio": +1.7, "pnn50": -1.7, "sdnn": -1.3}, 0, "YELLOW", "High YELLOW — elevated LF/HF"),
-    Scenario("EVAL-YEL-008", 0.55, {"rmssd": -1.4, "lf_hf_ratio": +1.2, "pnn50": -1.1, "sdnn": -0.8}, 1, "YELLOW", "Mixed moderate signals"),
-    # GREEN (8) — risk_score ≤ 0.40
-    Scenario("EVAL-GRN-001", 0.12, {"rmssd": +0.3, "lf_hf_ratio": -0.2, "pnn50": +0.2, "sdnn": +0.1}, 0, "GREEN",  "Normal baseline — healthy variation"),
-    Scenario("EVAL-GRN-002", 0.08, {"rmssd": +0.5, "lf_hf_ratio": -0.4, "pnn50": +0.4, "sdnn": +0.2}, 0, "GREEN",  "Very low risk — all features normal"),
-    Scenario("EVAL-GRN-003", 0.22, {"rmssd": -0.4, "lf_hf_ratio": +0.3, "pnn50": -0.3, "sdnn": -0.2}, 0, "GREEN",  "Mild asymmetry but GREEN"),
-    Scenario("EVAL-GRN-004", 0.18, {"rmssd": +0.2, "lf_hf_ratio": -0.1, "pnn50": +0.1, "sdnn":  0.0}, 0, "GREEN",  "Near-perfect baseline"),
-    Scenario("EVAL-GRN-005", 0.35, {"rmssd": -0.7, "lf_hf_ratio": +0.6, "pnn50": -0.6, "sdnn": -0.4}, 0, "GREEN",  "Upper GREEN — mild trend, no alarm"),
-    Scenario("EVAL-GRN-006", 0.15, {"rmssd": +0.4, "lf_hf_ratio": -0.3, "pnn50": +0.3, "sdnn": +0.2}, 0, "GREEN",  "Stable — positive HRV trend"),
-    Scenario("EVAL-GRN-007", 0.28, {"rmssd": -0.5, "lf_hf_ratio": +0.4, "pnn50": -0.4, "sdnn": -0.3}, 0, "GREEN",  "Minor deviation — routine monitoring"),
-    Scenario("EVAL-GRN-008", 0.38, {"rmssd": -0.8, "lf_hf_ratio": +0.7, "pnn50": -0.6, "sdnn": -0.4}, 0, "GREEN",  "Borderline GREEN — just below threshold"),
+    # --- RED (8): the HARD floor or an escalating tier drives RED; FNR(RED)=0 by construction.
+    Scenario("EVAL-RED-001", "RED", "GREEN", "GREEN", "RED", "HARD floor RED — un-lowerable"),
+    Scenario("EVAL-RED-002", "RED", "YELLOW", "GREEN", "RED", "HARD floor RED dominates temporal"),
+    Scenario("EVAL-RED-003", "RED", "GREEN", "RED", "RED", "HARD floor RED, RAG concurs"),
+    Scenario("EVAL-RED-004", "YELLOW", "GREEN", "RED", "RED", "RAG escalates YELLOW→RED (escalate-only)", soft_floor=True),
+    Scenario("EVAL-RED-005", "GREEN", "YELLOW", "RED", "RED", "temporal opens gate, RAG escalates to RED"),
+    Scenario("EVAL-RED-006", "RED", "RED", "RED", "RED", "all tiers RED"),
+    Scenario("EVAL-RED-007", "YELLOW", "YELLOW", "RED", "RED", "RAG escalation over YELLOW base"),
+    Scenario("EVAL-RED-008", "RED", "GREEN", "YELLOW", "RED", "HARD floor RED, RAG cannot lower"),
+    # --- YELLOW (8): single-feature SOFT floor or temporal drift, no RED anywhere.
+    Scenario("EVAL-YEL-001", "YELLOW", "GREEN", "GREEN", "YELLOW", "SOFT floor YELLOW, no quiet", soft_floor=True),
+    Scenario("EVAL-YEL-002", "GREEN", "YELLOW", "GREEN", "YELLOW", "temporal Drift YELLOW"),
+    Scenario("EVAL-YEL-003", "YELLOW", "YELLOW", "GREEN", "YELLOW", "floor + temporal both YELLOW", soft_floor=True),
+    Scenario("EVAL-YEL-004", "YELLOW", "GREEN", "YELLOW", "YELLOW", "RAG concurs YELLOW", soft_floor=True),
+    Scenario("EVAL-YEL-005", "GREEN", "YELLOW", "YELLOW", "YELLOW", "temporal + RAG YELLOW"),
+    Scenario("EVAL-YEL-006", "YELLOW", "GREEN", "GREEN", "YELLOW", "SOFT floor, Tier-2 not warmed (no quiet)", soft_floor=True),
+    Scenario("EVAL-YEL-007", "GREEN", "YELLOW", "GREEN", "YELLOW", "pure drift YELLOW"),
+    Scenario("EVAL-YEL-008", "YELLOW", "YELLOW", "YELLOW", "YELLOW", "all YELLOW", soft_floor=True),
+    # --- GREEN (8): clean; RAG must be SHORT-CIRCUITED (never escalates a GREEN base).
+    Scenario("EVAL-GRN-001", "GREEN", "GREEN", "GREEN", "GREEN", "all clean — RAG short-circuited"),
+    Scenario("EVAL-GRN-002", "GREEN", "GREEN", "RED", "GREEN", "RAG skipped on GREEN base (short-circuit)"),
+    Scenario("EVAL-GRN-003", "GREEN", "GREEN", "YELLOW", "GREEN", "RAG skipped on GREEN base"),
+    Scenario("EVAL-GRN-004", "GREEN", "GREEN", "GREEN", "GREEN", "clean window"),
+    Scenario("EVAL-GRN-005", "YELLOW", "GREEN", "GREEN", "GREEN", "SOFT floor quieted by warmed Tier-2", soft_floor=True, may_quiet=True),
+    Scenario("EVAL-GRN-006", "GREEN", "GREEN", "GREEN", "GREEN", "baseline calm"),
+    Scenario("EVAL-GRN-007", "YELLOW", "GREEN", "RED", "GREEN", "SOFT floor quieted → GREEN base → RAG short-circuited", soft_floor=True, may_quiet=True),
+    Scenario("EVAL-GRN-008", "GREEN", "GREEN", "GREEN", "GREEN", "calm"),
+    # --- HARD (6): the discriminating composition edges.
+    Scenario("EVAL-HARD-RED-001", "RED", "GREEN", "GREEN", "RED", "HARD RED cannot be quieted"),
+    Scenario("EVAL-HARD-RED-002", "YELLOW", "GREEN", "RED", "RED", "escalate-only RAG raises SOFT YELLOW to RED", soft_floor=True),
+    Scenario("EVAL-HARD-YEL-001", "YELLOW", "GREEN", "GREEN", "YELLOW", "SOFT floor stands without a quiet grant", soft_floor=True),
+    Scenario("EVAL-HARD-YEL-002", "GREEN", "YELLOW", "RED", "RED", "temporal opens gate; RAG escalates"),
+    Scenario("EVAL-HARD-GRN-001", "YELLOW", "GREEN", "GREEN", "GREEN", "SOFT floor + warmed Tier-2 quiet → GREEN", soft_floor=True, may_quiet=True),
+    Scenario("EVAL-HARD-GRN-002", "GREEN", "GREEN", "YELLOW", "GREEN", "RAG cannot escalate a GREEN base (short-circuit)"),
 ]
-# fmt: on
-
-# fmt: off
-SCENARIOS += [
-    # HARD scenarios (6) — mixed/contradictory signals, 2 per class.
-    # RED hard: risk_score > 0.70 so rule-based path returns RED in --no-llm mode.
-    Scenario("EVAL-HARD-RED-001", 0.75,
-             {"rmssd": -2.8, "lf_hf_ratio": +0.3, "pnn50": -2.5, "sdnn": -2.2},
-             0, "RED",
-             "RED — RMSSD+SDNN+pNN50 suppressed but LF/HF normal. No brady events."),
-    Scenario("EVAL-HARD-RED-002", 0.71,
-             {"rmssd": -1.2, "lf_hf_ratio": +3.1, "pnn50": -0.8, "sdnn": -0.6},
-             4, "RED",
-             "RED — dominant LF/HF shift with brady events, mild RMSSD change"),
-    # YELLOW hard: risk_score 0.41–0.69
-    Scenario("EVAL-HARD-YEL-001", 0.55,
-             {"rmssd": -2.1, "lf_hf_ratio": -0.4, "pnn50": -1.9, "sdnn": +0.3},
-             0, "YELLOW",
-             "YELLOW — RMSSD+pNN50 declining but LF/HF improving. Contradictory."),
-    Scenario("EVAL-HARD-YEL-002", 0.48,
-             {"rmssd": +0.2, "lf_hf_ratio": +2.4, "pnn50": +0.1, "sdnn": -0.3},
-             3, "YELLOW",
-             "YELLOW — isolated LF/HF elevation with brady, other HRV features normal"),
-    # GREEN hard: risk_score < 0.40
-    Scenario("EVAL-HARD-GRN-001", 0.35,
-             {"rmssd": -1.8, "lf_hf_ratio": +1.5, "pnn50": -1.6, "sdnn": -1.4},
-             0, "GREEN",
-             "GREEN — looks like YELLOW but risk_score low. Tests against false positives."),
-    Scenario("EVAL-HARD-GRN-002", 0.28,
-             {"rmssd": -0.9, "lf_hf_ratio": +0.8, "pnn50": +1.2, "sdnn": -0.7},
-             1, "GREEN",
-             "GREEN — mixed directions, single brady, low overall risk"),
-]
-# fmt: on
-
-assert len(SCENARIOS) == 30, f"Expected 30 scenarios, got {len(SCENARIOS)}"
-assert sum(1 for s in SCENARIOS if s.expected == "RED")    == 10
-assert sum(1 for s in SCENARIOS if s.expected == "YELLOW") == 10
-assert sum(1 for s in SCENARIOS if s.expected == "GREEN")  == 10

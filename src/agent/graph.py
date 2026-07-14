@@ -28,10 +28,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 from src.agent.memory import EpisodicMemory, PastAlert
 from src.agent.schemas import LLMOutput, NeonatalAlert
+from src.agent.state import AssessmentView
+from src.assessment.runtime import build_view_for_patient
 from src.knowledge.knowledge_base import ClinicalKnowledgeBase
 from src.knowledge.sources import traceable_context
-from src.pipeline.result import PipelineResult
-from src.pipeline.runner import NeonatalPipeline
 
 load_dotenv()
 
@@ -104,7 +104,7 @@ def _get_kb() -> ClinicalKnowledgeBase:
 
 class AgentState(TypedDict):
     patient_id: str
-    pipeline_result: Optional[PipelineResult]
+    pipeline_result: Optional[AssessmentView]
     rag_context: Optional[list[str]]
     rag_query: Optional[str]
     past_alerts: Optional[list[PastAlert]]
@@ -122,22 +122,16 @@ class Verify(BaseModel):
     reason: str
 
 
-@traceable(name="run_pipeline_node")
+@traceable(name="assess_view_node")
 def run_pipeline_node(state: AgentState) -> dict:
-    """Run the ONNX pipeline and load recent alert history for the patient."""
-    # Support injected synthetic PipelineResult for deterministic offline evals.
-    synthetic = os.environ.get("_SYNTHETIC_RESULT")
-    if synthetic:
-        import pickle
-        try:
-            result = pickle.loads(bytes.fromhex(synthetic))
-        except (ValueError, Exception) as exc:
-            raise RuntimeError(
-                f"_SYNTHETIC_RESULT could not be deserialised: {exc}"
-            ) from exc
-    else:
-        result = NeonatalPipeline().run(state["patient_id"])
+    """Build the deterministic Tier-1 view for the patient and load recent alert history.
 
+    Post-#7 this reads the personalised deviations via ``load_context`` and runs the
+    stateless Tier-1 ``DeviationAssessor`` (``build_view_for_patient``) — the ONNX classifier
+    is gone. Tier-2 CUSUM is *not* run here; it composes once at the cascade
+    (``src.assessment.runtime.assess_patient``), preserving the CUSUM-once invariant.
+    """
+    result = build_view_for_patient(state["patient_id"])
     past = EpisodicMemory().get_recent(state["patient_id"], n=7)
     return {"pipeline_result": result, "past_alerts": past}
 
@@ -148,11 +142,11 @@ def build_rag_query_node(state: AgentState) -> dict:
     r = state["pipeline_result"]
     top3 = r.get_top_deviated(3)
     query = (
-        f"Premature neonate, {r.risk_level} risk. "
+        f"Premature neonate, {r.level} risk. "
         f"HRV deviations from personal baseline: "
         + ", ".join(f"{d.name} z={d.z_score:+.1f}" for d in top3)
-        + f". Bradycardia events: {len(r.detected_events)} in last 6h. "
-        + f"Risk score: {r.risk_score:.2f}."
+        + f". Bradycardia events: {r.n_events} in last 6h. "
+        + f"Deterministic risk: {r.risk:.2f}."
     )
     return {"rag_query": query}
 
@@ -169,7 +163,7 @@ def retrieve_context_node(state: AgentState) -> dict:
     context = _get_kb().query(
         state["rag_query"],
         n=3,
-        risk_tier=state["pipeline_result"].risk_level,
+        risk_tier=state["pipeline_result"].level,
     )
     return {"rag_context": context}
 
@@ -187,20 +181,20 @@ def llm_reasoning_node(state: AgentState) -> dict:
     if _is_eval_mode():
         return {
             "llm_output": LLMOutput(
-                concern_level=r.risk_level,
+                concern_level=r.level,
                 primary_indicators=[d.name for d in r.get_top_deviated(3)] or ["unknown"],
                 clinical_reasoning=(
-                    f"Rule-based fallback: ONNX risk score {r.risk_score:.2f}, "
-                    f"{len(r.detected_events)} bradycardia events, and structured HRV deviations from baseline."
+                    f"Rule-based fallback: deterministic Tier-1 risk {r.risk:.2f}, "
+                    f"{r.n_events} bradycardia events, and structured HRV deviations from baseline."
                 ),
                 recommended_action=(
                     "Immediate clinical review"
-                    if r.risk_level == "RED"
+                    if r.level == "RED"
                     else "Increase monitoring frequency"
-                    if r.risk_level == "YELLOW"
+                    if r.level == "YELLOW"
                     else "Continue routine monitoring"
                 ),
-                confidence=0.90 if r.risk_level == "RED" else 0.75 if r.risk_level == "YELLOW" else 0.90,
+                confidence=0.90 if r.level == "RED" else 0.75 if r.level == "YELLOW" else 0.90,
             )
         }
 
@@ -218,12 +212,12 @@ def llm_reasoning_node(state: AgentState) -> dict:
     prompt = f"""You are a clinical decision support system for neonatal intensive care.
 
 Patient: {r.patient_id}
-ONNX risk score: {r.risk_score:.3f}
+Deterministic Tier-1 risk: {r.risk:.3f}
 
 HRV z-scores (deviation from THIS PATIENT's personal baseline):
 {chr(10).join(f"  {feat}: z={z:+.2f}  (actual={r.hrv_values.get(feat, 0):.1f}ms, baseline_mean={r.personal_baseline.get(feat, {}).get('mean', 0):.1f}ms)" for feat, z in r.z_scores.items())}
 
-Bradycardia events last 6h: {len(r.detected_events)}
+Bradycardia events last 6h: {r.n_events}
 
 {episodic}
 
@@ -259,7 +253,7 @@ def self_check_node(state: AgentState) -> dict:
     max_z = max(z_vals) if z_vals else 0.0
 
     # Deterministic safety net — always runs regardless of eval mode.
-    if r.risk_score > 0.8 and max_z > 3.0 and out.concern_level != "RED":
+    if r.risk > 0.8 and max_z > 3.0 and out.concern_level != "RED":
         out.concern_level = "RED"
         out.confidence = max(out.confidence, 0.85)
         out.clinical_reasoning += " [OVERRIDDEN: rule-based RED threshold triggered]"
@@ -273,7 +267,7 @@ def self_check_node(state: AgentState) -> dict:
                     "role": "user",
                     "content": (
                         f"Review neonatal alert: level={out.concern_level}, "
-                        f"confidence={out.confidence:.2f}, risk_score={r.risk_score:.2f}, "
+                        f"confidence={out.confidence:.2f}, risk={r.risk:.2f}, "
                         f"max_z_score={max_z:.1f}. "
                         "Is the concern level correct? "
                         "Reply with confirmed (true/false), revised_concern_level, and reason."
@@ -302,7 +296,7 @@ def assemble_alert_node(state: AgentState) -> dict:
         patient_id=result.patient_id,
         timestamp=datetime.now(),
         concern_level=llm_out.concern_level,
-        risk_score=result.risk_score,
+        risk=result.risk,
         primary_indicators=llm_out.primary_indicators,
         clinical_reasoning=llm_out.clinical_reasoning,
         recommended_action=llm_out.recommended_action,
