@@ -24,6 +24,10 @@ HRV_FEATURE_COLS = [
     "rr_ms_25%",
     "rr_ms_50%",
     "rr_ms_75%",
+    # HeRO discriminators added in issue #13 (replace the crude RR-tail proxies as
+    # Tier-1 triggers): sample entropy (low-only) + sample asymmetry (high-only).
+    "sampen",
+    "sample_asymmetry",
 ]
 
 # Ordered column names for the respiration-derived cardiorespiratory feature
