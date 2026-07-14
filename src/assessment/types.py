@@ -61,6 +61,15 @@ class Assessment(BaseModel):
     confidence: float
     rationale: str
     source: str  # which tier produced it: "deviation" | "temporal" | "rag"
+    # --- Two-level Safety Floor composition signals (ADR-0003 / #14) ---
+    # ``soft_floor``: Tier 1 sets this on a *single-feature* YELLOW — the quietable SOFT
+    # floor. RED / ≥2-concordant (the HARD floor) and GREEN leave it False.
+    soft_floor: bool = False
+    # ``may_quiet``: the calibrated deterministic Tier 2 (CUSUM) sets this when its gates
+    # (warmed-up + low accumulated drift + not-recently-alarmed) permit quieting a SOFT
+    # floor to GREEN this window. Only a tier that owns auditable, self-correcting state
+    # ever sets it — never the LLM. The cascade grants the quiet iff both are present.
+    may_quiet: bool = False
 
 
 class Verdict(BaseModel):

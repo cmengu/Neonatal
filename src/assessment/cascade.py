@@ -20,9 +20,20 @@ Tier 3 (RAG / LLM, ``source="rag"``) is governed by two extra rules, added in #5
   window. The cascade identifies the rag tier structurally, via its ``source`` attribute,
   so it can skip it *without invoking it*.
 
-The floor rule encodes the *safe* half of ADR-0001's asymmetric de-escalation: a temporal
-Assessment *below* the floor is clamped up to it. The two-level (HARD/SOFT) floor and Tier
-2's gated quiet-to-GREEN of a SOFT single-feature YELLOW are ADR-0003 / #14, not here.
+The Safety Floor is **two-level** (ADR-0003 / #14):
+
+- **HARD floor** — RED / ≥2-concordant Tier 1 signals. Un-lowerable by any tier, ever (the
+  FNR=0 guarantee).
+- **SOFT floor** — a single-feature YELLOW the deviation tier flags (``soft_floor=True``). A
+  calibrated, gated **Tier 2** may quiet it to GREEN (``may_quiet=True``) — never the LLM,
+  never RED. The quiet is provisional: the deterministic CUSUM re-escalates if the drift
+  persists, so a wrong quiet costs bounded delay, never a silent omission (fail-safe defaults
+  in the time domain). ADR-0003 also settles #4's fork: Tier 2 does not quiet Tier 3, and
+  Tier 3 does not quiet anything — the only quiet in the cascade is Tier 2's quiet of the
+  SOFT floor.
+
+The deviation tier speaks to the verdict *only* through the floor; temporal Drift and the
+rag tier escalate above it. ``Verdict = max( effective_floor, temporal↑, rag↑ )``.
 """
 from __future__ import annotations
 
@@ -65,21 +76,39 @@ class VerdictCascade:
 
         assessments: list[Assessment] = [t.assess(context) for t in base_tiers]
 
-        # Safety Floor: the deterministic minimum from the deviation tier.
-        floor = most_severe(
-            *[a.level for a in assessments if a.source == self._floor_source]
+        # --- Two-level Safety Floor (ADR-0003 / #14) ---
+        floor_assessments = [a for a in assessments if a.source == self._floor_source]
+        # HARD floor: everything the deviation tier raises that is *not* a quietable SOFT
+        # floor (RED / ≥2 concordant). Un-lowerable — the FNR=0 guarantee.
+        hard_floor = most_severe(*[a.level for a in floor_assessments if not a.soft_floor])
+        # SOFT floor: a single-feature YELLOW the deviation tier flagged as quietable.
+        soft_floor_level = most_severe(
+            *[a.level for a in floor_assessments if a.soft_floor]
         )
-        # Merged Tier 1 + Tier 2 level — never below the floor.
-        base_level = most_severe(*[a.level for a in assessments], floor)
+        # A calibrated, gated Tier 2 (never the LLM) may quiet the SOFT floor to GREEN.
+        gated_quiet = any(a.may_quiet for a in assessments)
+        soft_contribution = (
+            ConcernLevel.GREEN if gated_quiet else soft_floor_level
+        )
+        effective_floor = most_severe(hard_floor, soft_contribution)
 
-        # Tier 3 short-circuit: skip the LLM entirely when the calm case is GREEN.
+        # Non-floor tiers (temporal Drift, and rag after the short-circuit) may escalate
+        # *above* the effective floor; the deviation tier speaks only through the floor.
+        non_floor = [a for a in assessments if a.source != self._floor_source]
+        base_level = most_severe(effective_floor, *[a.level for a in non_floor])
+
+        # Tier 3 short-circuit: skip the LLM entirely when the merged calm case is GREEN.
         if rag_tiers and base_level > ConcernLevel.GREEN:
-            assessments += [t.assess(context) for t in rag_tiers]
+            rag_assessments = [t.assess(context) for t in rag_tiers]
+            assessments += rag_assessments
+            non_floor += rag_assessments
 
-        # Escalate-only: any rag level below base_level is discarded by ``most_severe``
-        # (it can raise, never lower). The floor stays un-lowerable by construction.
-        level = most_severe(*[a.level for a in assessments], floor)
-        escalated_by = [a.source for a in assessments if a.level > floor]
+        # Escalate-only: any escalating tier can raise above the floor but never lower it
+        # (``most_severe``); the effective floor is the un-lowerable minimum. A quieted SOFT
+        # YELLOW settles to GREEN here — but only because a deterministic gated Tier 2, not
+        # an LLM, granted it, and the deterministic CUSUM re-escalates if the drift persists.
+        level = most_severe(effective_floor, *[a.level for a in non_floor])
+        escalated_by = [a.source for a in non_floor if a.level > effective_floor]
 
         # Headline (risk / rationale / confidence) comes from the most severe assessment.
         headline = max(assessments, key=lambda a: (a.level, a.risk))
@@ -90,7 +119,7 @@ class VerdictCascade:
             risk=headline.risk,
             confidence=headline.confidence,
             rationale=headline.rationale,
-            safety_floor=floor,
+            safety_floor=effective_floor,
             assessments=assessments,
             escalated_by=escalated_by,
         )
