@@ -34,12 +34,16 @@ _BASELINE_MEANS: dict[str, float] = {
     "lf_hf_ratio": 1.5,
     "rr_ms_min": 380.0, "rr_ms_max": 490.0,
     "rr_ms_25%": 422.0, "rr_ms_50%": 432.0, "rr_ms_75%": 442.0,
+    # HeRO discriminators (#13): SampEn ~1.2 in healthy preterm HRV (falls before sepsis);
+    # sample_asymmetry ~1.0 at baseline (median-ref R2/R1 ratio; >1 = decel-heavy).
+    "sampen": 1.2, "sample_asymmetry": 1.0,
 }
 _BASELINE_STDS: dict[str, float] = {
     "mean_rr":    30.0, "sdnn":   6.0, "rmssd":   4.0, "pnn50":   1.2,
     "lf_hf_ratio": 0.5,
     "rr_ms_min":  28.0, "rr_ms_max":  35.0,
     "rr_ms_25%":  24.0, "rr_ms_50%":  28.0, "rr_ms_75%": 24.0,
+    "sampen": 0.3, "sample_asymmetry": 0.2,
 }
 
 
