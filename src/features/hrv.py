@@ -5,6 +5,13 @@ Computes time-domain and frequency-domain HRV metrics from windowed RR intervals
 Time-domain:       mean_rr, sdnn, rmssd, pnn50
 Frequency-domain:  lf_hf_ratio  (Welch PSD, LF 0.04–0.15 Hz / HF 0.15–0.40 Hz)
 Statistical:       rr_ms_min, rr_ms_max, rr_ms_25%, rr_ms_50%, rr_ms_75%
+Nonlinear (#13):   sampen           — sample entropy, the HeRO irregularity measure
+Histogram (#13):   sample_asymmetry — R2/R1 deceleration-burden statistic
+
+``sampen`` and ``sample_asymmetry`` are the two neonatally-validated HeRO
+discriminators added in issue #13 (research gate:
+docs/research/cardiorespiratory-feature-validation.md, issue #10). They replace
+the crude RR-tail proxies (``rr_ms_max``/``rr_ms_75%``) as Tier-1 triggers.
 
 The authoritative ordered column name list is in ``src.features.constants.HRV_FEATURE_COLS``.
 The keys returned by ``compute_hrv_features()`` must stay in sync with that list.
@@ -12,6 +19,19 @@ The keys returned by ``compute_hrv_features()`` must stay in sync with that list
 import numpy as np
 from scipy import signal, interpolate
 from scipy.integrate import trapezoid as _trapz  # np.trapz removed in NumPy 2.0
+
+# --- SampEn parameters ---------------------------------------------------------
+# Neonatal defaults from the #10 research gate: m=3 (Lake 2002, PMID 12185014),
+# r=0.2×SD (Richman & Moorman 2000, PMID 10843903; PhysioNet ``sampen``). The
+# *window length* N≈4096 (~20–25 min) lives with the pipeline that supplies
+# ``rr_entropy`` (scripts/run_nb03.py), because SampEn slides "per the existing
+# Tier-1 cadence" — the window is long, the step stays the fast HRV step.
+# [UNVERIFIED] exact r/N from the neonatal primary (paywalled); relax r upward
+# for short/noisy windows. These are tunable, not primary-verified constants.
+SAMPEN_M = 3
+SAMPEN_R_FACTOR = 0.2
+_SAMPEN_ARTIFACT_FRAC = 0.20  # reject beats >20% from the local median (dropped/ectopic)
+_SAMPEN_DETREND_WIN = 15      # moving-average baseline window (beats)
 
 
 def _compute_lf_hf(rr_ms: np.ndarray, fs_resample: float = 4.0) -> float:
@@ -70,18 +90,120 @@ def _compute_lf_hf(rr_ms: np.ndarray, fs_resample: float = 4.0) -> float:
     return float(lf_power / max(hf_power, 1e-9))
 
 
-def compute_hrv_features(rr_ms: np.ndarray) -> dict:
+def _preprocess_for_entropy(rr_ms: np.ndarray) -> np.ndarray:
+    """Artifact-reject then detrend an RR series before computing SampEn.
+
+    Entropy "inevitably falls in any record with spikes" — a missed or ectopic
+    beat masquerades as structure and craters SampEn — so rejection is mandatory,
+    not optional (Lake 2002, PMID 12185014; HeRO methods per Moorman 2011,
+    PMID 22026974). Steps: drop non-finite values, reject beats that deviate
+    >20% from the local median of the surrounding window, then remove a slow
+    baseline (subtract a moving average) so ``r`` scales to the fluctuations,
+    not the trend.
+    """
+    x = np.asarray(rr_ms, dtype=np.float64)
+    x = x[np.isfinite(x)]
+    if len(x) < 5:
+        return x
+
+    win = min(_SAMPEN_DETREND_WIN, len(x))
+    local_med = np.array(
+        [np.median(x[max(0, i - win) : i + 1]) for i in range(len(x))]
+    )
+    keep = np.abs(x - local_med) <= _SAMPEN_ARTIFACT_FRAC * local_med
+    x = x[keep]
+    if len(x) < 5:
+        return x
+
+    # Detrend: subtract a centred moving-average baseline (edge-padded).
+    kernel = np.ones(win) / win
+    baseline = np.convolve(np.pad(x, win // 2, mode="edge"), kernel, mode="valid")
+    baseline = baseline[: len(x)]
+    return x - baseline
+
+
+def _sampen(rr_ms: np.ndarray, m: int = SAMPEN_M, r_factor: float = SAMPEN_R_FACTOR) -> float:
+    """Sample entropy of an RR series (ms). Returns NaN when uncomputable.
+
+    SampEn = −ln( A / B ) where B is the number of matching template pairs of
+    length ``m`` and A of length ``m+1``, using the Chebyshev (max) distance and
+    a tolerance ``r = r_factor × SD`` of the *detrended* series, counted without
+    self-matches (Richman & Moorman 2000, PMID 10843903). Falls toward regularity
+    — the direction that precedes sepsis in the neonatal RR domain (Lake 2002).
+
+    NaN (never a fabricated value) when the series is too short, degenerate
+    (r≈0), or produces no matches at length m/m+1 (entropy undefined).
+    """
+    x = _preprocess_for_entropy(rr_ms)
+    n = len(x)
+    if n < m + 2:
+        return float("nan")
+
+    r = r_factor * np.std(x, ddof=1)
+    if not np.isfinite(r) or r <= 0:
+        return float("nan")
+
+    def _count_matches(mm: int) -> int:
+        # Number of i<j template pairs within Chebyshev distance r (no self-match).
+        templates = np.array([x[i : i + mm] for i in range(n - mm + 1)])
+        total = 0
+        for i in range(len(templates) - 1):
+            dist = np.max(np.abs(templates[i + 1 :] - templates[i]), axis=1)
+            total += int(np.count_nonzero(dist <= r))
+        return total
+
+    b = _count_matches(m)
+    a = _count_matches(m + 1)
+    if b == 0 or a == 0:
+        return float("nan")
+    return float(-np.log(a / b))
+
+
+def _sample_asymmetry(rr_ms: np.ndarray) -> float:
+    """Sample asymmetry (R2/R1) of the RR histogram. Returns NaN when uncomputable.
+
+    Sign convention (PINNED — the #13 [UNVERIFIED] flag): computed on **RR** with
+    the Kovatchev R2/R1 convention about the median. Values above the median are
+    long RR / **decelerations (R2)**; below are short RR / **accelerations (R1)**.
+    A deceleration-heavy histogram gives R2 > R1 → ratio **> 1**; the value
+    **rises** before sepsis (~3.3 → 4.2), so it wires as a **high-only** trigger
+    (Kovatchev 2003, PMID 12930915; Moorman 2011, PMID 22026974).
+    """
+    x = np.asarray(rr_ms, dtype=np.float64)
+    x = x[np.isfinite(x)]
+    n = len(x)
+    if n < 3:
+        return float("nan")
+
+    dev = x - np.median(x)
+    r1 = float(np.sum(dev[dev < 0] ** 2) / n)  # accelerations (short RR, below median)
+    r2 = float(np.sum(dev[dev > 0] ** 2) / n)  # decelerations (long RR, above median)
+    if r1 <= 0:
+        return float("nan")
+    return r2 / r1
+
+
+def compute_hrv_features(rr_ms: np.ndarray, rr_entropy: np.ndarray | None = None) -> dict:
     """
     Compute all HRV features from a 1D array of RR intervals (ms).
 
     Returns a flat dict with keys:
       mean_rr, sdnn, rmssd, pnn50, lf_hf_ratio,
-      rr_ms_min, rr_ms_max, rr_ms_25%, rr_ms_50%, rr_ms_75%
+      rr_ms_min, rr_ms_max, rr_ms_25%, rr_ms_50%, rr_ms_75%,
+      sampen, sample_asymmetry
 
     Parameters
     ----------
     rr_ms : np.ndarray
-        1D array of RR intervals in milliseconds. Must be non-empty.
+        1D array of RR intervals in milliseconds for this window. Must be non-empty.
+        All statistics except ``sampen`` are computed on this window.
+    rr_entropy : np.ndarray, optional
+        The (typically longer, ~4096-interval / ~20–25 min) trailing RR series over
+        which ``sampen`` is computed — SampEn needs far more beats than the ~50-beat
+        HRV window to be stable, so the pipeline slides a long window "per the existing
+        Tier-1 cadence" (issue #13; docs/research/cardiorespiratory-feature-validation.md).
+        When ``None``, SampEn falls back to ``rr_ms``; when too short it is NaN
+        (cold-start), which the direction-aware floor treats as non-triggering.
 
     Raises
     ------
@@ -99,26 +221,32 @@ def compute_hrv_features(rr_ms: np.ndarray) -> dict:
     pnn50   = float(np.sum(np.abs(np.diff(rr)) > 50) / max(n - 1, 1) * 100) if n > 1 else 0.0
     lf_hf   = _compute_lf_hf(rr)
 
+    entropy_src = rr if rr_entropy is None else np.asarray(rr_entropy, dtype=np.float64)
+
     return {
-        "mean_rr":     mean_rr,
-        "sdnn":        sdnn,
-        "rmssd":       rmssd,
-        "pnn50":       pnn50,
-        "lf_hf_ratio": lf_hf,
-        "rr_ms_min":   float(np.min(rr)),
-        "rr_ms_max":   float(np.max(rr)),
-        "rr_ms_25%":   float(np.percentile(rr, 25)),
-        "rr_ms_50%":   float(np.percentile(rr, 50)),
-        "rr_ms_75%":   float(np.percentile(rr, 75)),
+        "mean_rr":          mean_rr,
+        "sdnn":             sdnn,
+        "rmssd":            rmssd,
+        "pnn50":            pnn50,
+        "lf_hf_ratio":      lf_hf,
+        "rr_ms_min":        float(np.min(rr)),
+        "rr_ms_max":        float(np.max(rr)),
+        "rr_ms_25%":        float(np.percentile(rr, 25)),
+        "rr_ms_50%":        float(np.percentile(rr, 50)),
+        "rr_ms_75%":        float(np.percentile(rr, 75)),
+        "sampen":           _sampen(entropy_src),
+        "sample_asymmetry": _sample_asymmetry(rr),
     }
 
 
-def get_window_features(rr_intervals: np.ndarray, record_name: str, window_idx: int) -> dict:
+def get_window_features(
+    rr_intervals: np.ndarray,
+    record_name: str,
+    window_idx: int,
+    rr_entropy: np.ndarray | None = None,
+) -> dict:
     """
     Encode a window of RR intervals with record metadata for feature matrix rows.
-
-    Signature is intentionally unchanged from the original implementation so that
-    run_nb03.py requires no import update.
 
     Parameters
     ----------
@@ -128,13 +256,16 @@ def get_window_features(rr_intervals: np.ndarray, record_name: str, window_idx: 
         Infant record identifier (e.g. 'infant1').
     window_idx : int
         Index of this window within the recording.
+    rr_entropy : np.ndarray, optional
+        The trailing long window over which ``sampen`` is computed (issue #13). See
+        ``compute_hrv_features``. When ``None``, SampEn falls back to ``rr_intervals``.
 
     Returns
     -------
     dict
         Feature dict with record_name, window_idx, plus all keys from compute_hrv_features().
     """
-    features = compute_hrv_features(rr_intervals)
+    features = compute_hrv_features(rr_intervals, rr_entropy=rr_entropy)
     features["record_name"] = record_name
     features["window_idx"]  = window_idx
     return features
