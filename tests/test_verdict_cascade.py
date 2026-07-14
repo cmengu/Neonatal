@@ -17,12 +17,14 @@ class FakeAssessor:
     records whether ``assess`` ran — used to prove the Tier 3 short-circuit.
     """
 
-    def __init__(self, level: ConcernLevel, source: str, risk: float = 0.5):
+    def __init__(self, level: ConcernLevel, source: str, risk: float = 0.5,
+                 soft_floor: bool = False, may_quiet: bool = False):
         self.source = source
         self.called = False
         self._a = Assessment(
             level=level, risk=risk, confidence=0.9,
             rationale="fake assessment for testing purposes", source=source,
+            soft_floor=soft_floor, may_quiet=may_quiet,
         )
 
     def assess(self, context: AssessmentContext) -> Assessment:
@@ -183,3 +185,88 @@ def test_rag_escalate_only_holds_across_all_combinations():
             FakeAssessor(rag_l, "rag"),
         ])
         assert c.assess(_ctx()).level >= floor_l
+
+
+# --- #14: two-level Safety Floor — gated SOFT-YELLOW de-escalation (ADR-0003) ---
+
+
+def test_soft_yellow_quieted_to_green_when_tier2_grants():
+    # A single-feature YELLOW SOFT floor + a gated Tier 2 that grants the quiet → GREEN.
+    c = VerdictCascade(tiers=[
+        FakeAssessor(ConcernLevel.YELLOW, "deviation", soft_floor=True),
+        FakeAssessor(ConcernLevel.GREEN, "temporal", may_quiet=True),
+    ])
+    v = c.assess(_ctx())
+    assert v.level == ConcernLevel.GREEN
+    assert v.safety_floor == ConcernLevel.GREEN
+
+
+def test_soft_yellow_stands_without_a_gated_quiet():
+    # No may_quiet grant → the SOFT floor is NOT quieted (fail-closed toward keeping it).
+    c = VerdictCascade(tiers=[
+        FakeAssessor(ConcernLevel.YELLOW, "deviation", soft_floor=True),
+        FakeAssessor(ConcernLevel.GREEN, "temporal"),  # calm, but no grant
+    ])
+    assert c.assess(_ctx()).level == ConcernLevel.YELLOW
+
+
+def test_hard_red_is_never_quieted_even_with_a_grant():
+    # RED is the HARD floor — un-quietable regardless of any quiet grant.
+    c = VerdictCascade(tiers=[
+        FakeAssessor(ConcernLevel.RED, "deviation"),  # not soft
+        FakeAssessor(ConcernLevel.GREEN, "temporal", may_quiet=True),
+    ])
+    assert c.assess(_ctx()).level == ConcernLevel.RED
+
+
+def test_hard_floor_never_lowered_by_a_quiet_grant_property():
+    """FNR=0 for the HARD floor: a non-soft deviation floor at any level is never lowered,
+    even when a tier offers a quiet grant."""
+    for lvl in (ConcernLevel.GREEN, ConcernLevel.YELLOW, ConcernLevel.RED):
+        c = VerdictCascade(tiers=[
+            FakeAssessor(lvl, "deviation"),  # HARD (not soft)
+            FakeAssessor(ConcernLevel.GREEN, "temporal", may_quiet=True),
+        ])
+        assert c.assess(_ctx()).level >= lvl
+
+
+def test_quieted_soft_floor_also_short_circuits_tier3():
+    # Quieting the SOFT floor drops the merged level to GREEN, so the LLM is never invoked.
+    rag = FakeAssessor(ConcernLevel.RED, "rag")
+    c = VerdictCascade(tiers=[
+        FakeAssessor(ConcernLevel.YELLOW, "deviation", soft_floor=True),
+        FakeAssessor(ConcernLevel.GREEN, "temporal", may_quiet=True),
+        rag,
+    ])
+    v = c.assess(_ctx())
+    assert v.level == ConcernLevel.GREEN
+    assert rag.called is False
+
+
+def test_soft_quiet_re_escalates_deterministically_when_drift_persists():
+    """End-to-end with the real Tier 1 + Tier 2: a persisting single-feature excursion is
+    quieted at first (CUSUM calm & warmed-up), but as it persists the CUSUM accumulates,
+    the quiet stops, and it re-escalates — bounded delay, never a silent omission."""
+    from src.assessment.cusum import CusumThresholds, QuietGates, TemporalAssessor
+    from src.assessment.deviation import DeviationAssessor
+
+    temporal = TemporalAssessor(
+        thresholds=CusumThresholds(h=5.0),
+        quiet_gates=QuietGates(warmup_windows=5, max_c_plus_frac=0.25, guard_windows=5),
+    )
+    cascade = VerdictCascade(tiers=[DeviationAssessor(), temporal])
+
+    # Warm the CUSUM on calm windows (deviation GREEN, so verdict GREEN throughout).
+    for _ in range(5):
+        assert cascade.assess(AssessmentContext(patient_id="t", z_scores={"sdnn": 0.0})).level \
+            == ConcernLevel.GREEN
+
+    # Now a persistent single-feature YELLOW (deviation flags it SOFT; composite feeds CUSUM).
+    yellow = AssessmentContext(patient_id="t", z_scores={"sdnn": -2.2})
+    assert DeviationAssessor().assess(yellow).level == ConcernLevel.YELLOW  # it IS a floor
+
+    levels = [cascade.assess(yellow).level for _ in range(10)]
+    # The first window is quieted (CUSUM was calm & warmed-up): a GREEN appears...
+    assert ConcernLevel.GREEN in levels
+    # ...but persistence re-escalates deterministically — it does not stay quiet forever.
+    assert levels[-1] >= ConcernLevel.YELLOW

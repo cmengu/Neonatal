@@ -103,6 +103,30 @@ class CusumThresholds:
 
 
 @dataclass(frozen=True)
+class QuietGates:
+    """Gates that must *all* hold before Tier 2 may quiet a SOFT single-feature YELLOW to
+    GREEN (ADR-0003 / #14). The quiet is the deterministic, per-infant, re-escalating form
+    of a monitor's annunciation-delay — so it is granted only when the CUSUM is trustworthy.
+
+    - ``warmup_windows`` — minimum windows processed before the detector is "warmed-up"
+      enough to be trusted to quiet (not cold-start).
+    - ``max_c_plus_frac`` — accumulated drift ``C⁺`` must sit *well below* the decision
+      interval ``h`` (``C⁺ < max_c_plus_frac · h``): no building trend.
+    - ``guard_windows`` — windows that must have elapsed since the last Drift signal
+      ("not-recently-alarmed").
+
+    Defaults are **deliberately conservative** — quieting is the hazardous (omission-side)
+    direction, so the gates fail *closed* toward keeping the YELLOW. They are engineering
+    constants, **not** tuned to a measured false-quiet rate (unmeasurable on the unlabelled
+    10-infant set — see ADR-0003's honest residual); a future calibration is a config change.
+    """
+
+    warmup_windows: int = 20
+    max_c_plus_frac: float = 0.25
+    guard_windows: int = 20
+
+
+@dataclass(frozen=True)
 class CusumState:
     """Per-infant, per-detector persisted state — the accumulated evidence itself.
 
@@ -220,9 +244,11 @@ class TemporalAssessor:
         self,
         store: CusumStateStore | None = None,
         thresholds: CusumThresholds = CusumThresholds(),
+        quiet_gates: QuietGates = QuietGates(),
     ) -> None:
         self._store = store if store is not None else InMemoryCusumStore()
         self._t = thresholds
+        self._gates = quiet_gates
 
     def assess(self, context: AssessmentContext) -> Assessment:
         composite = composite_deviation(context.z_scores, self._t.directions)
@@ -231,6 +257,23 @@ class TemporalAssessor:
         c_plus = max(0.0, prior.c_plus + composite - self._t.k)
         n_updates = prior.n_updates + 1
         fired = c_plus >= self._t.h
+
+        # SOFT-floor quiet grant (ADR-0003): only when the CUSUM is warmed-up, shows no
+        # *building trend* coming into this window, and has not recently alarmed. The
+        # low-drift gate reads the **prior** C⁺ (the trend the detector had accumulated
+        # before this window) — not the post-update value — so a transient single-window
+        # blip is quietable, while a *persisting* excursion pushes prior C⁺ past the gate on
+        # the next window and the quiet stops (then the CUSUM fires): bounded delay, never a
+        # silent omission. A fired window can never also grant a quiet (``not fired``).
+        windows_since_signal = (
+            n_updates - prior.last_signal_at if prior.last_signal_at is not None else None
+        )
+        may_quiet = (
+            not fired
+            and n_updates >= self._gates.warmup_windows
+            and prior.c_plus < self._gates.max_c_plus_frac * self._t.h
+            and (windows_since_signal is None or windows_since_signal >= self._gates.guard_windows)
+        )
 
         if fired:
             level = ConcernLevel.YELLOW
@@ -270,4 +313,5 @@ class TemporalAssessor:
             confidence=_DETECTOR_CONFIDENCE,
             rationale=rationale,
             source="temporal",
+            may_quiet=may_quiet,
         )

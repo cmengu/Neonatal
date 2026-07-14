@@ -143,3 +143,26 @@ def test_global_trigger_threshold_is_adjustable():
     # two concordant features just past a stricter 1.0 trigger reach RED.
     a = DeviationAssessor(strict).assess(_ctx({"sdnn": -1.2, "rmssd": -1.3}))
     assert a.level == ConcernLevel.RED
+
+
+# --- #14: the HARD/SOFT floor distinction (ADR-0003) ---------------------------
+
+
+def test_single_feature_yellow_is_a_soft_floor():
+    # Exactly one pathological feature → YELLOW, flagged quietable (the SOFT floor).
+    a = DeviationAssessor().assess(_ctx({"sdnn": -2.5}))
+    assert a.level == ConcernLevel.YELLOW
+    assert a.soft_floor is True
+
+
+def test_concordant_red_is_a_hard_floor():
+    # Two concordant features → RED, never quietable.
+    a = DeviationAssessor().assess(_ctx({"sdnn": -2.5, "rmssd": -2.5}))
+    assert a.level == ConcernLevel.RED
+    assert a.soft_floor is False
+
+
+def test_green_is_not_a_soft_floor():
+    a = DeviationAssessor().assess(_ctx({"sdnn": 0.1}))
+    assert a.level == ConcernLevel.GREEN
+    assert a.soft_floor is False
