@@ -111,12 +111,19 @@ class DeviationAssessor:
         ]
         triggered.sort(key=lambda t: t[2], reverse=True)
 
+        # Concordance gate → concern level, and the HARD/SOFT floor distinction (ADR-0003):
+        # ≥2 concordant is the un-quietable HARD floor (RED); exactly one feature is the
+        # quietable SOFT floor (YELLOW); zero is GREEN. A YELLOW here is *by construction* a
+        # single-feature signal, which is precisely ADR-0003's quietable SOFT floor.
         if len(triggered) >= 2:
             level = ConcernLevel.RED
+            soft_floor = False
         elif len(triggered) == 1:
             level = ConcernLevel.YELLOW
+            soft_floor = True
         else:
             level = ConcernLevel.GREEN
+            soft_floor = False
 
         strongest = max(
             (self._pathological_magnitude(f, z) for f, z in context.z_scores.items()),
@@ -140,5 +147,6 @@ class DeviationAssessor:
         )
         # confidence is 1.0: a deterministic rule is certain it applied correctly.
         return Assessment(
-            level=level, risk=risk, confidence=1.0, rationale=rationale, source="deviation"
+            level=level, risk=risk, confidence=1.0, rationale=rationale, source="deviation",
+            soft_floor=soft_floor,
         )

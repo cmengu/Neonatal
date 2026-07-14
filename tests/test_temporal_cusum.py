@@ -184,3 +184,55 @@ def test_in_memory_store_is_isolated_per_patient():
     p2 = a.assess(AssessmentContext(patient_id="p2", z_scores={"sdnn": -1.5, "rmssd": -1.5}))
     # p2's first window alone cannot have accumulated p1's evidence.
     assert p2.level == ConcernLevel.GREEN
+
+
+# --- #14: the SOFT-floor quiet grant (may_quiet gates) -------------------------
+
+from src.assessment.cusum import QuietGates
+
+
+def _calm():
+    return _ctx({"sdnn": 0.0, "rmssd": 0.0})  # composite 0
+
+
+def test_may_quiet_false_before_warmup():
+    a = TemporalAssessor()  # default gates: warmup=20
+    r = None
+    for _ in range(19):
+        r = a.assess(_calm())
+    assert r.level == ConcernLevel.GREEN and r.may_quiet is False
+
+
+def test_may_quiet_true_once_warmed_calm_and_not_alarmed():
+    a = TemporalAssessor()
+    for _ in range(20):
+        r = a.assess(_calm())
+    assert r.may_quiet is True
+
+
+def test_may_quiet_false_with_a_building_trend():
+    # Warmed + calm, then a window arriving on top of an already-built prior C⁺ is not quietable.
+    a = TemporalAssessor()
+    for _ in range(20):
+        a.assess(_calm())
+    a.assess(_ctx({"sdnn": -3.0}))  # composite 3.0 → prior C⁺ now ~2.5 (> 0.25·h)
+    r = a.assess(_ctx({"sdnn": -1.0}))  # arrives on a built-up trend → no quiet
+    assert r.level == ConcernLevel.GREEN and r.may_quiet is False
+
+
+def test_may_quiet_false_right_after_an_alarm_then_true_after_the_guard():
+    a = TemporalAssessor()  # h=5, guard=20, warmup=20
+    for _ in range(20):
+        a.assess(_calm())
+    fired = False
+    for _ in range(12):
+        r = a.assess(_ctx({"sdnn": -1.5, "rmssd": -1.5}))
+        if r.level == ConcernLevel.YELLOW:
+            fired = True
+            break
+    assert fired
+    r = a.assess(_calm())            # one window after the alarm: recently-alarmed
+    assert r.may_quiet is False
+    for _ in range(20):              # let the guard window elapse (calm)
+        r = a.assess(_calm())
+    assert r.may_quiet is True
