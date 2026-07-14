@@ -66,10 +66,17 @@ def load_all_chunks() -> list[dict]:
 
 
 def build() -> None:
-    qdrant_host = os.getenv("QDRANT_HOST", "localhost")
-    qdrant_port = int(os.getenv("QDRANT_PORT", "6333"))
-    logging.info("Connecting to Qdrant at %s:%d...", qdrant_host, qdrant_port)
-    client      = QdrantClient(host=qdrant_host, port=qdrant_port)
+    # On-disk mode (no Docker) when QDRANT_PATH is set — mirrors knowledge_base.py's
+    # convention, so the index can be rebuilt locally without a Qdrant server.
+    qdrant_path = os.getenv("QDRANT_PATH")
+    if qdrant_path:
+        logging.info("Building on-disk Qdrant store at %s ...", qdrant_path)
+        client = QdrantClient(path=qdrant_path)
+    else:
+        qdrant_host = os.getenv("QDRANT_HOST", "localhost")
+        qdrant_port = int(os.getenv("QDRANT_PORT", "6333"))
+        logging.info("Connecting to Qdrant at %s:%d...", qdrant_host, qdrant_port)
+        client = QdrantClient(host=qdrant_host, port=qdrant_port)
     dense_model = SentenceTransformer("all-MiniLM-L6-v2")
 
     chunks = load_all_chunks()

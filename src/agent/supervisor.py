@@ -22,6 +22,7 @@ from langsmith import traceable
 
 from src.agent.memory import EpisodicMemory, PastAlert
 from src.agent.schemas import BradycardiaAssessment, LLMOutput, NeonatalAlert, SignalAssessment
+from src.knowledge.sources import traceable_context
 from src.agent.specialists.brady_agent import brady_agent_node
 from src.agent.specialists.clinical_agent import clinical_agent_node
 from src.agent.specialists.protocol_agent import protocol_agent_node
@@ -101,7 +102,8 @@ def assemble_multi_node(state: dict) -> dict:
         clinical_reasoning=llm_out.clinical_reasoning,
         recommended_action=llm_out.recommended_action,
         confidence=llm_out.confidence,
-        retrieved_context=state.get("rag_context") or [],
+        # Traceability gate (#5): only guideline-sourced chunks may be cited in an alert.
+        retrieved_context=traceable_context(state.get("rag_context") or []),
         self_check_passed=state.get("self_check_passed", True),
         protocol_compliant="PROTOCOL FLAG" not in llm_out.recommended_action,
         past_similar_events=len(state.get("past_alerts") or []),

@@ -32,6 +32,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from src.agent.graph import _get_kb, agent, multi_agent
 from src.agent.schemas import NeonatalAlert
+from src.assessment import DeviationAssessor, VerdictCascade, load_context
 
 DB_PATH = REPO_ROOT / "data" / "audit.db"
 
@@ -133,12 +134,31 @@ async def _sse_generator(patient_id: str):
             yield f"data: {json.dumps(payload, default=str)}\n\n"
 
 
+# Verdict Cascade — deterministic Tier 1 (Deviation floor) for now.
+# Tier 2 (Temporal) and Tier 3 (RAG) land in later tickets behind the same seam.
+_CASCADE = VerdictCascade(tiers=[DeviationAssessor()])
+
+
 # ─────────────────────────── endpoints ──────────────────────────
 
 @app.post("/assess/{patient_id}", response_model=NeonatalAlert)
 def assess(patient_id: str) -> NeonatalAlert:
     """Blocking multi-agent assessment. Returns full NeonatalAlert JSON."""
     return _invoke_blocking(multi_agent, patient_id)
+
+
+@app.post("/assess/{patient_id}/cascade")
+def assess_cascade(patient_id: str) -> dict:
+    """Verdict Cascade assessment — a deterministic Verdict from the Tier 1 floor.
+
+    Computed from the infant's personalised z-scores with no ONNX and no LLM. This is
+    the new Assessor seam that will replace the classifier-driven verdict path.
+    """
+    try:
+        context = load_context(patient_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _CASCADE.assess(context).model_dump(mode="json")
 
 
 @app.post("/assess/{patient_id}/generalist", response_model=NeonatalAlert)

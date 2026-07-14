@@ -135,12 +135,13 @@ def _rule_based_signal(risk_score: float, max_z: float) -> SignalAssessment:
     """Deterministic signal assessment for EVAL_NO_LLM mode."""
     if risk_score > 0.70:
         return SignalAssessment(
-            autonomic_pattern="pre_sepsis",
-            primary_features=["rmssd", "lf_hf_ratio"],
+            autonomic_pattern="abnormal_hrc",
+            primary_features=["rmssd", "sdnn"],
             confidence=0.90,
             physiological_reasoning=(
                 f"Rule-based: risk_score={risk_score:.2f} > 0.70, max_z={max_z:.1f}. "
-                "Autonomic withdrawal pattern consistent with pre-sepsis HRV signature."
+                "Autonomic withdrawal pattern — abnormal heart-rate characteristics "
+                "(increased risk); an adjunct risk signal, not a sepsis diagnosis."
             ),
         )
     if risk_score > 0.40:

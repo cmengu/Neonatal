@@ -135,7 +135,7 @@ def generate(use_groq: bool = False, n_synthetic: int = 200) -> None:
     # Source 2: Synthetic PipelineResults (diverse z-score patterns)
     print(f"Adding {n_synthetic} synthetic examples ...")
     rng = np.random.default_rng(seed=42)
-    # Distribution: 40% pre-sepsis, 30% normal, 30% borderline
+    # Distribution: 40% abnormal-HRC (increased risk), 30% normal, 30% borderline
     n_sepsis     = int(n_synthetic * 0.40)
     n_normal     = int(n_synthetic * 0.30)
     n_borderline = n_synthetic - n_sepsis - n_normal

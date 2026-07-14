@@ -29,6 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 from src.agent.memory import EpisodicMemory, PastAlert
 from src.agent.schemas import LLMOutput, NeonatalAlert
 from src.knowledge.knowledge_base import ClinicalKnowledgeBase
+from src.knowledge.sources import traceable_context
 from src.pipeline.result import PipelineResult
 from src.pipeline.runner import NeonatalPipeline
 
@@ -195,7 +196,7 @@ def llm_reasoning_node(state: AgentState) -> dict:
                 recommended_action=(
                     "Immediate clinical review"
                     if r.risk_level == "RED"
-                    else "Reassess in 2 hours"
+                    else "Increase monitoring frequency"
                     if r.risk_level == "YELLOW"
                     else "Continue routine monitoring"
                 ),
@@ -306,7 +307,8 @@ def assemble_alert_node(state: AgentState) -> dict:
         clinical_reasoning=llm_out.clinical_reasoning,
         recommended_action=llm_out.recommended_action,
         confidence=llm_out.confidence,
-        retrieved_context=state.get("rag_context") or [],
+        # Traceability gate (#5): only guideline-sourced chunks may be cited in an alert.
+        retrieved_context=traceable_context(state.get("rag_context") or []),
         self_check_passed=state.get("self_check_passed", True),
         protocol_compliant="PROTOCOL FLAG" not in llm_out.recommended_action,
         past_similar_events=len(state.get("past_alerts") or []),

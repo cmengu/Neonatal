@@ -94,8 +94,8 @@ def clear_injection() -> None:
 # fmt: off
 SCENARIOS: list[Scenario] = [
     # RED (8) — risk_score > 0.70. Rule-based path returns RED. FNR=0.000 guaranteed.
-    Scenario("EVAL-RED-001", 0.87, {"rmssd": -3.2, "lf_hf_ratio": +2.9, "pnn50": -2.7, "sdnn": -1.8}, 3, "RED",    "Classic pre-sepsis HRV signature"),
-    Scenario("EVAL-RED-002", 0.82, {"rmssd": -2.8, "lf_hf_ratio": +2.5, "pnn50": -2.4, "sdnn": -2.1}, 2, "RED",    "Moderate pre-sepsis with 2 brady events"),
+    Scenario("EVAL-RED-001", 0.87, {"rmssd": -3.2, "lf_hf_ratio": +2.9, "pnn50": -2.7, "sdnn": -1.8}, 3, "RED",    "Classic abnormal-HRC signature"),
+    Scenario("EVAL-RED-002", 0.82, {"rmssd": -2.8, "lf_hf_ratio": +2.5, "pnn50": -2.4, "sdnn": -2.1}, 2, "RED",    "Moderate abnormal HRC with 2 brady events"),
     Scenario("EVAL-RED-003", 0.91, {"rmssd": -3.8, "lf_hf_ratio": +3.3, "pnn50": -3.1, "sdnn": -2.6}, 5, "RED",    "Severe HRV suppression"),
     Scenario("EVAL-RED-004", 0.75, {"rmssd": -2.1, "lf_hf_ratio": +2.2, "pnn50": -1.9, "sdnn": -1.5}, 1, "RED",    "Borderline RED — just above threshold"),
     Scenario("EVAL-RED-005", 0.93, {"rmssd": -4.1, "lf_hf_ratio": +3.8, "pnn50": -3.5, "sdnn": -3.0}, 6, "RED",    "Critical — extreme HRV collapse"),
