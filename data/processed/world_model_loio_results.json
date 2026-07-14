@@ -1,0 +1,103 @@
+{
+  "lead_windows": 5,
+  "guard_windows": 30,
+  "features": [
+    "mean_rr_dev",
+    "sdnn_dev",
+    "rmssd_dev",
+    "rr_ms_max_dev",
+    "rr_ms_75%_dev"
+  ],
+  "pooled_auc": 0.5148532832286558,
+  "mean_infant_auc": 0.5009318747689289,
+  "median_infant_auc": 0.4985427282034321,
+  "n_infants": 10,
+  "total_events": 595,
+  "total_lead_windows": 2975,
+  "total_baseline_windows": 110308,
+  "lead_time_windows_median": 1.0,
+  "lead_time_seconds_median": 10.7,
+  "n_events_with_lead_rise": 5,
+  "per_infant": [
+    {
+      "patient_id": "infant1",
+      "auc": 0.5098184687074478,
+      "n_events": 77,
+      "n_lead": 385,
+      "n_baseline": 12313,
+      "seconds_per_window": 9.7
+    },
+    {
+      "patient_id": "infant2",
+      "auc": 0.5012010533380019,
+      "n_events": 63,
+      "n_lead": 315,
+      "n_baseline": 8704,
+      "seconds_per_window": 11.6
+    },
+    {
+      "patient_id": "infant3",
+      "auc": 0.518098964281752,
+      "n_events": 73,
+      "n_lead": 365,
+      "n_baseline": 8396,
+      "seconds_per_window": 11.65
+    },
+    {
+      "patient_id": "infant4",
+      "auc": 0.5230996474535955,
+      "n_events": 65,
+      "n_lead": 325,
+      "n_baseline": 14488,
+      "seconds_per_window": 9.05
+    },
+    {
+      "patient_id": "infant5",
+      "auc": 0.4949291319882984,
+      "n_events": 72,
+      "n_lead": 360,
+      "n_baseline": 10293,
+      "seconds_per_window": 10.7
+    },
+    {
+      "patient_id": "infant6",
+      "auc": 0.5337629811555313,
+      "n_events": 54,
+      "n_lead": 270,
+      "n_baseline": 12215,
+      "seconds_per_window": 11.05
+    },
+    {
+      "patient_id": "infant7",
+      "auc": 0.4958844030688623,
+      "n_events": 32,
+      "n_lead": 160,
+      "n_baseline": 5344,
+      "seconds_per_window": 9.45
+    },
+    {
+      "patient_id": "infant8",
+      "auc": 0.489421503034075,
+      "n_events": 25,
+      "n_lead": 125,
+      "n_baseline": 6427,
+      "seconds_per_window": 10.75
+    },
+    {
+      "patient_id": "infant9",
+      "auc": 0.47463485410285344,
+      "n_events": 95,
+      "n_lead": 475,
+      "n_baseline": 18609,
+      "seconds_per_window": 10.05
+    },
+    {
+      "patient_id": "infant10",
+      "auc": 0.4684677405588716,
+      "n_events": 39,
+      "n_lead": 195,
+      "n_baseline": 13519,
+      "seconds_per_window": 9.8
+    }
+  ]
+}
