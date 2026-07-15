@@ -122,4 +122,11 @@ class VerdictCascade:
             safety_floor=effective_floor,
             assessments=assessments,
             escalated_by=escalated_by,
+            # Surface the headline tier's traceable detail on the Verdict (#23) so a caller
+            # reading only the Verdict recovers the action, indicators, and citations without
+            # bypassing the cascade. The headline is the most severe assessment — the one whose
+            # rationale/risk already drives the Verdict — so its detail is the coherent choice.
+            recommended_action=headline.recommended_action,
+            primary_indicators=list(headline.primary_indicators),
+            citations=list(headline.citations),
         )

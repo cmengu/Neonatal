@@ -70,6 +70,18 @@ class Assessment(BaseModel):
     # floor to GREEN this window. Only a tier that owns auditable, self-correcting state
     # ever sets it — never the LLM. The cascade grants the quiet iff both are present.
     may_quiet: bool = False
+    # --- Traceable clinical detail (#23) ---
+    # The actionable, human-facing detail a tier can carry alongside its concern level, so
+    # the ``Assessor`` seam stops discarding the very fields the API used to bypass the
+    # cascade to recover (recommended action, indicators, citations). All optional: a
+    # deterministic tier populates what it can (Tier 1 names its deviating features), the
+    # rag tier carries all three, and a tier with nothing to add leaves them empty.
+    # ``recommended_action``: the guideline-grounded next step (rag tier; None otherwise).
+    recommended_action: str | None = None
+    # ``primary_indicators``: the features / observations that drove this tier's level.
+    primary_indicators: list[str] = Field(default_factory=list)
+    # ``citations``: traceable retrieved-guideline references backing the rationale (rag tier).
+    citations: list[str] = Field(default_factory=list)
 
 
 class Verdict(BaseModel):
@@ -83,3 +95,11 @@ class Verdict(BaseModel):
     safety_floor: ConcernLevel
     assessments: list[Assessment]
     escalated_by: list[str] = Field(default_factory=list)
+    # --- Traceable clinical detail (#23) ---
+    # Lifted from the headline Assessment so a caller reading only the Verdict still gets the
+    # recommended action, the indicators behind the level, and the guideline citations — the
+    # three things ``POST /assess`` used to bypass the cascade (running the bare LLM graph) to
+    # recover. With them on the Verdict, the narrow seam no longer invites its own bypass.
+    recommended_action: str | None = None
+    primary_indicators: list[str] = Field(default_factory=list)
+    citations: list[str] = Field(default_factory=list)

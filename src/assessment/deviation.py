@@ -165,8 +165,11 @@ class DeviationAssessor:
             f"direction-aware): one feature caps at YELLOW, two concordant reach RED. "
             f"Not a validated clinical cutoff."
         )
+        # The deviating features (strongest first) are this tier's indicators (#23); the
+        # deterministic floor has no action or citations to offer, so those stay empty.
+        indicators = [feature for feature, _z, _mag in triggered]
         # confidence is 1.0: a deterministic rule is certain it applied correctly.
         return Assessment(
             level=level, risk=risk, confidence=1.0, rationale=rationale, source="deviation",
-            soft_floor=soft_floor,
+            soft_floor=soft_floor, primary_indicators=indicators,
         )
