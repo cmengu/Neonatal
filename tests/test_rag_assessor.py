@@ -24,7 +24,7 @@ class FakeGraph:
 def _alert(concern="YELLOW", risk=0.62, confidence=0.8, reasoning="reduced RMSSD vs baseline"):
     # Mimics the fields RagVerdictAssessor reads off a NeonatalAlert.
     return SimpleNamespace(
-        concern_level=concern, risk_score=risk, confidence=confidence,
+        concern_level=concern, risk=risk, confidence=confidence,
         clinical_reasoning=reasoning,
     )
 

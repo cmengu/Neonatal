@@ -5,7 +5,7 @@ Produces data/lora_training/signal_train.jsonl — one JSON object per line:
 
 Data sources:
   1. All 30 eval scenarios (deterministic, reproducible)
-  2. ~200 additional synthetic PipelineResults via generate_synthetic_result()
+  2. ~200 additional synthetic AssessmentViews via generate_synthetic_result()
 
 Labels:
   Default (offline): _rule_based_signal() — same logic as EVAL_NO_LLM mode.
@@ -45,15 +45,15 @@ _INSTRUCTION = (
 
 
 def _result_to_input_str(r) -> str:
-    """Format a PipelineResult into the model's input string."""
+    """Format a AssessmentView into the model's input string."""
     z_parts = ", ".join(
         f"{feat} z={r.z_scores.get(feat, 0.0):+.2f}"
         for feat in HRV_FEATURE_COLS
     )
     return (
         f"{z_parts}. "
-        f"Risk score {r.risk_score:.2f}. "
-        f"Bradycardia events: {len(r.detected_events)}."
+        f"Deterministic risk {r.risk:.2f}. "
+        f"Bradycardia events: {r.n_events}."
     )
 
 
@@ -61,7 +61,7 @@ def _label_rule_based(r) -> SignalAssessment:
     """Label using the deterministic rule-based signal assessment (offline)."""
     z_vals = [abs(z) for z in r.z_scores.values()]
     max_z = max(z_vals) if z_vals else 0.0
-    return _rule_based_signal(r.risk_score, max_z)
+    return _rule_based_signal(r.level, max_z)
 
 
 def _label_groq(r) -> SignalAssessment:
@@ -77,7 +77,7 @@ def _label_groq(r) -> SignalAssessment:
     query = (
         "Neonatal HRV autonomic pattern: "
         + ", ".join(f"{d.name} z={d.z_score:+.1f}" for d in top3)
-        + f". Risk score {r.risk_score:.2f}. Bradycardia events: {len(r.detected_events)}."
+        + f". Deterministic risk {r.risk:.2f}. Bradycardia events: {r.n_events}."
     )
     chunks = _get_kb().query_by_category(query, categories=["hrv_indicators", "sepsis_early_warning"], n=3)
     context = "\n\n".join(chunks)
@@ -100,7 +100,7 @@ def _label_groq(r) -> SignalAssessment:
 
 
 def _make_record(r, label_fn) -> dict:
-    """Build one JSONL record from a PipelineResult."""
+    """Build one JSONL record from a AssessmentView."""
     assessment: SignalAssessment = label_fn(r)
     return {
         "instruction": _INSTRUCTION,
@@ -132,7 +132,7 @@ def generate(use_groq: bool = False, n_synthetic: int = 200) -> None:
         r = build_pipeline_result(s)
         records.append(_make_record(r, label_fn))
 
-    # Source 2: Synthetic PipelineResults (diverse z-score patterns)
+    # Source 2: Synthetic AssessmentViews (diverse z-score patterns)
     print(f"Adding {n_synthetic} synthetic examples ...")
     rng = np.random.default_rng(seed=42)
     # Distribution: 40% abnormal-HRC (increased risk), 30% normal, 30% borderline

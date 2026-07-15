@@ -48,7 +48,7 @@ class RagVerdictAssessor:
         alert = state["final_alert"]
         return Assessment(
             level=ConcernLevel(alert.concern_level),
-            risk=alert.risk_score,
+            risk=alert.risk,
             confidence=alert.confidence,
             rationale=alert.clinical_reasoning,
             source=self.source,
