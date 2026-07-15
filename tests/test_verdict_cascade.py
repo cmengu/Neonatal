@@ -18,13 +18,17 @@ class FakeAssessor:
     """
 
     def __init__(self, level: ConcernLevel, source: str, risk: float = 0.5,
-                 soft_floor: bool = False, may_quiet: bool = False):
+                 soft_floor: bool = False, may_quiet: bool = False,
+                 recommended_action=None, primary_indicators=(), citations=()):
         self.source = source
         self.called = False
         self._a = Assessment(
             level=level, risk=risk, confidence=0.9,
             rationale="fake assessment for testing purposes", source=source,
             soft_floor=soft_floor, may_quiet=may_quiet,
+            recommended_action=recommended_action,
+            primary_indicators=list(primary_indicators),
+            citations=list(citations),
         )
 
     def assess(self, context: AssessmentContext) -> Assessment:
@@ -64,6 +68,36 @@ def test_verdict_carries_the_assessment_trail():
     assert len(v.assessments) == 1
     assert v.assessments[0].source == "deviation"
     assert v.safety_floor == ConcernLevel.RED
+
+
+def test_verdict_lifts_headline_action_indicators_and_citations():
+    # #23: a caller reading only the Verdict recovers the traceable detail without bypassing
+    # the cascade. The headline (most severe) tier here is the escalating rag tier.
+    c = VerdictCascade(tiers=[
+        FakeAssessor(ConcernLevel.YELLOW, "deviation", primary_indicators=("rmssd",)),
+        FakeAssessor(
+            ConcernLevel.RED, "rag", risk=0.9,
+            recommended_action="Immediate clinical review",
+            primary_indicators=("sampen", "sample_asymmetry"),
+            citations=("NICE NG195", "AAP/COFN preterm"),
+        ),
+    ])
+    v = c.assess(_ctx())
+    assert v.level == ConcernLevel.RED
+    assert v.recommended_action == "Immediate clinical review"
+    assert v.primary_indicators == ["sampen", "sample_asymmetry"]
+    assert v.citations == ["NICE NG195", "AAP/COFN preterm"]
+
+
+def test_tier1_only_verdict_still_carries_deviation_indicators():
+    # The production cascade is Tier-1-only today; its Verdict must still surface indicators.
+    c = VerdictCascade(tiers=[
+        FakeAssessor(ConcernLevel.YELLOW, "deviation", primary_indicators=("rmssd",)),
+    ])
+    v = c.assess(_ctx())
+    assert v.primary_indicators == ["rmssd"]
+    assert v.recommended_action is None
+    assert v.citations == []
 
 
 def test_cascade_runs_with_only_fakes_no_external_deps():

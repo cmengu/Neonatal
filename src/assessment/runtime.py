@@ -66,3 +66,21 @@ def build_view(context: AssessmentContext) -> AssessmentView:
 def build_view_for_patient(patient_id: str) -> AssessmentView:
     """Convenience: load a real patient's context and build its Tier-3 view."""
     return build_view(load_context(patient_id))
+
+
+def view_from_state(state: dict) -> AssessmentView:
+    """Build the Tier-3 view from the ``AssessmentContext`` the cascade already holds (#24).
+
+    The cascade loads the window once and threads it in under ``state["context"]``; using it
+    here deletes Tier 3's second disk read and guarantees the LLM tier reasons over the **same
+    window** Tiers 1-2 saw (no divergence if the CSV changed mid-assessment). Standalone callers
+    that invoke the graph with only ``patient_id`` (the SSE stream, eval, the A/B generalist)
+    have no context to thread, so they fall back to a load — still correct, just not deduped.
+
+    Either way this stays stateless: ``build_view`` runs only Tier 1, never the Tier-2 CUSUM,
+    so the CUSUM-once invariant the cascade owns is untouched.
+    """
+    context = state.get("context")
+    if context is not None:
+        return build_view(context)
+    return build_view_for_patient(state["patient_id"])

@@ -28,37 +28,41 @@ PATIENTS = [f"infant{i}" for i in range(1, 11)]
 WINDOW_SIZE = 50
 STEP_SIZE = 25
 LOOKBACK = 10
-FS_ECG = 500
 HRV_COLS = HRV_FEATURE_COLS
 
-frp_df = pd.read_csv(PROCESSED_DIR / "first_r_peaks.csv")
-missing = [p for p in PATIENTS if p not in frp_df["record_name"].values]
-assert not missing, f"first_r_peaks.csv is missing patients: {missing}"
-FIRST_R_PEAKS = dict(zip(frp_df["record_name"], frp_df["first_r_peak_absolute"].astype(int)))
+# Alignment uses the per-beat sample positions carried in each *_rr_clean.csv
+# (issue #18); no global fs constant and no first_r_peaks reconstruction are needed.
 
 logging.info("REPO_ROOT:     %s", REPO_ROOT)
 logging.info("PROCESSED_DIR: %s", PROCESSED_DIR)
 logging.info("LOOKBACK:      %s windows", LOOKBACK)
 logging.info("Patients:      %s", PATIENTS)
-logging.info("First R-peaks: %s", FIRST_R_PEAKS)
 
 
 def align_labels_to_windows(patient_id):
-    rr_ms = pd.read_csv(PROCESSED_DIR / f"{patient_id}_rr_clean.csv")["rr_ms"].values
+    """Map each ``.atr`` bradycardia-onset sample to the HRV window that contains it.
+
+    Both the onset (``sample_idx``) and the per-beat ``beat_sample`` positions carried
+    from NB02 live in the same raw-sample space, so alignment is a direct positional
+    lookup — no fs constant (issue #18: infant1/infant5 are 250 Hz, not 500), and no
+    ``cumsum(rr)`` reconstruction (which drifted at every beat the physiological band
+    dropped). Window ``w`` of NB03 spans retained-beat indices ``[w·STEP, w·STEP+WINDOW)``.
+    """
+    rr_df = pd.read_csv(PROCESSED_DIR / f"{patient_id}_rr_clean.csv")
+    beat_sample = rr_df["beat_sample"].values
     labels_df = pd.read_csv(PROCESSED_DIR / f"{patient_id}_labels.csv")
-    rr_samples = rr_ms / 1000.0 * FS_ECG
-    first_r_peak_abs = FIRST_R_PEAKS[patient_id]
-    cumulative_pos = first_r_peak_abs + np.cumsum(rr_samples)
-    n_windows = (len(rr_ms) - WINDOW_SIZE) // STEP_SIZE + 1
+    n_beats = len(beat_sample)
+    n_windows = (n_beats - WINDOW_SIZE) // STEP_SIZE + 1
     labelled_windows = set()
     dropped_prefix = 0
     dropped_range = 0
     for _, row in labels_df.iterrows():
         sample_idx = row["sample_idx"]
-        if sample_idx < first_r_peak_abs:
+        if sample_idx < beat_sample[0]:
             dropped_prefix += 1
             continue
-        matches = np.where(cumulative_pos >= sample_idx)[0]
+        # First retained beat at or after the onset sample.
+        matches = np.where(beat_sample >= sample_idx)[0]
         if len(matches) == 0:
             dropped_range += 1
             continue
@@ -68,15 +72,15 @@ def align_labels_to_windows(patient_id):
             labelled_windows.add(window_idx)
         else:
             dropped_range += 1
-    # Alignment bug check: if any annotation is within rr range, at least one must map
+    # Alignment sanity: if any annotation is within the recorded beat span, one must map.
     if len(labels_df) > 0:
-        in_range = (labels_df["sample_idx"] <= cumulative_pos[-1]).any()
+        in_range = (labels_df["sample_idx"] <= beat_sample[-1]).any()
         if in_range:
             assert len(labelled_windows) > 0, (
                 f"{patient_id}: annotations in range but all dropped — alignment bug"
             )
-    logging.info("  %s: %s annotations -> %s labelled windows (dropped_prefix=%s, dropped_range=%s, first_r_peak_abs=%s)",
-                 patient_id, len(labels_df), len(labelled_windows), dropped_prefix, dropped_range, first_r_peak_abs)
+    logging.info("  %s: %s annotations -> %s labelled windows (dropped_prefix=%s, dropped_range=%s, first_beat_sample=%s)",
+                 patient_id, len(labels_df), len(labelled_windows), dropped_prefix, dropped_range, int(beat_sample[0]))
     return labelled_windows
 
 

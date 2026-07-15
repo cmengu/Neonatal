@@ -17,7 +17,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import wfdb
-import neurokit2 as nk
 
 REPO_ROOT = Path(os.getcwd())
 if REPO_ROOT.name == "notebooks":
@@ -28,9 +27,16 @@ REAL_DATA_DIR = REPO_ROOT / "data" / "raw" / "physionet.org" / "files" / "picsdb
 PROCESSED_DIR = REPO_ROOT / "data" / "processed"
 PATIENTS = ["infant1", "infant2", "infant3", "infant4", "infant5",
             "infant6", "infant7", "infant8", "infant9", "infant10"]
-FS_ECG = 500
-ECTOPIC_THRESHOLD = 0.20
-CHUNK_HOURS = 1  # Process ECG in 1-hour chunks to avoid OOM
+# Physiological RR band (issue #18). The old ectopic filter was a global-median
+# percentage band that DELETED bradycardia (a large sustained RR jump reads as
+# ectopic), so the bradycardia target never reached any tier. A bradycardia is a
+# real interval; a multi-second gap is a sensor dropout. RR_MIN=200ms (HR 300,
+# rejects double-detections) .. RR_MAX=2000ms (HR 30) preserves every annotated
+# bradycardia onset in this cohort (measured onset RR maxes at ~1542ms) while
+# dropping the handful of >2s recording gaps. Sample fs is per-infant (250 Hz for
+# infant1/infant5, 500 Hz otherwise) — read from each header, never hardcoded.
+RR_MIN_MS = 200.0
+RR_MAX_MS = 2000.0
 
 PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 logging.info("REPO_ROOT:     %s", REPO_ROOT)
@@ -38,70 +44,49 @@ logging.info("REAL_DATA_DIR: %s", REAL_DATA_DIR)
 logging.info("PROCESSED_DIR: %s", PROCESSED_DIR)
 
 
-def load_rr_from_wfdb(record_path, fs, ectopic_threshold, chunk_hours=1):
-    """Load recording in chunks, trim flat prefix, process each chunk, merge R-peaks."""
+def load_rr_from_wfdb(record_path, rr_min_ms=RR_MIN_MS, rr_max_ms=RR_MAX_MS):
+    """Build the RR stream from the reference QRS annotations (``.qrsc``).
+
+    The ``.qrsc`` file is the dataset's *reference* R-peak set (ANNOTATORS:
+    "Reference ECG r peaks") — gold-standard beat locations, so there is no need
+    to re-detect peaks from the raw ECG (the old neurokit2 path). Sample fs is read
+    per-infant from the header. RR intervals outside the physiological band are
+    dropped (non-physiological jumps / sensor gaps), which — unlike the old
+    global-median band — *keeps* bradycardia (issue #18).
+
+    Returns ``(rr_clean_ms, beat_sample)`` where ``beat_sample[i]`` is the raw-space
+    sample index of the beat ENDING interval ``rr_clean_ms[i]``. Carrying the true
+    sample position lets NB04 align ``.atr`` onsets to windows exactly, with no fs
+    assumption and no cumulative-sum drift across dropped beats.
+    """
     record_path = Path(record_path)
     header = wfdb.rdheader(str(record_path))
-    sig_len = header.sig_len
-    if hasattr(header, "fs") and header.fs is not None:
-        fs = int(header.fs)
-    logging.info("  Signal: %s samples @ %s Hz (%.1f h)", sig_len, fs, sig_len / fs / 3600)
+    fs = int(header.fs)
+    logging.info("  Signal: %s samples @ %s Hz (%.1f h)", header.sig_len, fs, header.sig_len / fs / 3600)
 
-    # 1. Detect flat prefix using first ~16 min
-    flat_detect_samples = min(500_000, sig_len)
-    flat_chunk = wfdb.rdsamp(str(record_path), sampfrom=0, sampto=flat_detect_samples)
-    ecg_flat = flat_chunk[0][:, 0].astype(np.float64)
-    del flat_chunk
+    ann = wfdb.rdann(str(record_path), "qrsc")
+    peaks = np.asarray(ann.sample, dtype=np.int64)
+    peaks = np.sort(np.unique(peaks))
+    if len(peaks) < 2:
+        raise ValueError(f"Too few reference QRS annotations for {record_path}.")
 
-    window = 100
-    start_idx = 0
-    for i in range(0, len(ecg_flat) - window, window):
-        if ecg_flat[i : i + window].std() > 0.001:
-            start_idx = i
-            break
-    del ecg_flat
-    if start_idx > 0:
-        logging.info("  Trimmed flat prefix: %s samples (%.1fs)", start_idx, start_idx / fs)
+    rr_ms = np.diff(peaks) / fs * 1000.0
+    end_beat = peaks[1:]  # sample index of the beat ending each interval
 
-    # 2. Process in chunks from start_idx to end
-    chunk_samples = chunk_hours * 3600 * fs
-    all_r_peaks = []
-    chunk_start = start_idx
-    chunk_idx = 0
-    while chunk_start < sig_len:
-        chunk_end = min(chunk_start + chunk_samples, sig_len)
-        record_chunk = wfdb.rdsamp(str(record_path), sampfrom=chunk_start, sampto=chunk_end)
-        ecg_chunk = record_chunk[0][:, 0].astype(np.float64)
-        del record_chunk
+    band = (rr_ms >= rr_min_ms) & (rr_ms <= rr_max_ms)
+    rr_clean = rr_ms[band]
+    beat_sample = end_beat[band]
 
-        signals, info = nk.ecg_process(ecg_chunk, sampling_rate=fs)
-        del ecg_chunk
-        r_peaks_local = np.array(info["ECG_R_Peaks"], dtype=np.int64)
-        if len(r_peaks_local) > 0:
-            global_peaks = chunk_start + r_peaks_local
-            all_r_peaks.extend(global_peaks.tolist())
-        del r_peaks_local, signals, info
-
-        chunk_idx += 1
-        if chunk_idx % 5 == 0 or chunk_end >= sig_len:
-            logging.info("  Chunk %s: %s–%s (%s peaks so far)", chunk_idx, chunk_start, chunk_end, len(all_r_peaks))
-        chunk_start = chunk_end
-
-    if len(all_r_peaks) == 0:
-        raise ValueError(f"No R-peaks detected for {record_path}. Check signal quality.")
-    all_r_peaks = np.sort(np.unique(all_r_peaks))
-
-    first_r_peak_abs = int(all_r_peaks[0])
-    rr_ms = np.diff(all_r_peaks) / fs * 1000.0
-    del all_r_peaks
-
-    rolling_median = np.median(rr_ms)
-    mask = np.abs(rr_ms - rolling_median) / rolling_median < ectopic_threshold
-    rr_clean = rr_ms[mask]
-
-    logging.info("  Raw beats: %s, after ectopic removal: %s", len(rr_ms), len(rr_clean))
+    brady = int(np.sum(rr_clean > 600.0))
+    logging.info(
+        "  Reference beats: %s, RR intervals: %s, in-band: %s (dropped %s), "
+        "bradycardia RR>600ms kept: %s, max RR: %.0fms",
+        len(peaks), len(rr_ms), len(rr_clean), len(rr_ms) - len(rr_clean),
+        brady, rr_clean.max() if len(rr_clean) else 0.0,
+    )
+    first_r_peak_abs = int(beat_sample[0]) if len(beat_sample) else int(peaks[0])
     logging.info("  first_r_peak_absolute: %s samples (%.2fs)", first_r_peak_abs, first_r_peak_abs / fs)
-    return rr_clean, first_r_peak_abs
+    return rr_clean, beat_sample, first_r_peak_abs
 
 
 if USE_REAL_DATA:
@@ -109,11 +94,9 @@ if USE_REAL_DATA:
     for patient_id in PATIENTS:
         try:
             record_path = REAL_DATA_DIR / f"{patient_id}_ecg"
-            rr_clean, first_r_peak_abs = load_rr_from_wfdb(
-                record_path, FS_ECG, ECTOPIC_THRESHOLD, chunk_hours=CHUNK_HOURS
-            )
+            rr_clean, beat_sample, first_r_peak_abs = load_rr_from_wfdb(record_path)
             out_path = PROCESSED_DIR / f"{patient_id}_rr_clean.csv"
-            pd.DataFrame({"rr_ms": rr_clean}).to_csv(out_path, index=False)
+            pd.DataFrame({"rr_ms": rr_clean, "beat_sample": beat_sample}).to_csv(out_path, index=False)
             logging.info("  Saved: %s  (%s rows)", out_path, len(rr_clean))
             first_r_peak_rows.append({"record_name": patient_id, "first_r_peak_absolute": first_r_peak_abs})
         except FileNotFoundError as e:
