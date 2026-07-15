@@ -60,10 +60,14 @@ def test_carries_action_indicators_and_citations_through_the_seam():
     assert a.citations == ["AAP/COFN preterm sepsis pathway", "HeRO HRC adjunct note"]
 
 
-def test_passes_patient_id_to_the_graph():
+def test_threads_context_and_patient_id_into_the_graph():
+    # #24: the cascade's window is threaded in so Tier 3 assesses the *same* window as Tiers
+    # 1-2 (no second disk read); patient_id still rides along for logging / episodic lookups.
     graph = FakeGraph(_alert())
-    RagVerdictAssessor(graph=graph).assess(AssessmentContext(patient_id="infant7"))
-    assert graph.invoked_with == {"patient_id": "infant7"}
+    ctx = AssessmentContext(patient_id="infant7", z_scores={"rmssd": -2.1})
+    RagVerdictAssessor(graph=graph).assess(ctx)
+    assert graph.invoked_with["patient_id"] == "infant7"
+    assert graph.invoked_with["context"] is ctx
 
 
 def test_source_attribute_is_readable_without_invoking():

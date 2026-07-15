@@ -29,7 +29,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 from src.agent.memory import EpisodicMemory, PastAlert
 from src.agent.schemas import LLMOutput, NeonatalAlert
 from src.agent.state import AssessmentView
-from src.assessment.runtime import build_view_for_patient
+from src.assessment.runtime import view_from_state
+from src.assessment.types import AssessmentContext
 from src.knowledge.knowledge_base import ClinicalKnowledgeBase
 from src.knowledge.sources import traceable_context
 
@@ -104,6 +105,8 @@ def _get_kb() -> ClinicalKnowledgeBase:
 
 class AgentState(TypedDict):
     patient_id: str
+    # Threaded window (#24) — see MultiAgentState.context. Optional; standalone callers omit it.
+    context: Optional[AssessmentContext]
     pipeline_result: Optional[AssessmentView]
     rag_context: Optional[list[str]]
     rag_query: Optional[str]
@@ -126,12 +129,12 @@ class Verify(BaseModel):
 def run_pipeline_node(state: AgentState) -> dict:
     """Build the deterministic Tier-1 view for the patient and load recent alert history.
 
-    Post-#7 this reads the personalised deviations via ``load_context`` and runs the
-    stateless Tier-1 ``DeviationAssessor`` (``build_view_for_patient``) — the ONNX classifier
-    is gone. Tier-2 CUSUM is *not* run here; it composes once at the cascade
-    (``src.assessment.runtime.assess_patient``), preserving the CUSUM-once invariant.
+    Post-#7 this runs the stateless Tier-1 ``DeviationAssessor`` — the ONNX classifier is
+    gone; post-#24 it builds from a threaded ``AssessmentContext`` when present, else loads by
+    ``patient_id`` (``view_from_state``). Tier-2 CUSUM is *not* run here; it composes once at
+    the cascade (``src.assessment.runtime.assess_patient``), preserving the CUSUM-once invariant.
     """
-    result = build_view_for_patient(state["patient_id"])
+    result = view_from_state(state)
     past = EpisodicMemory().get_recent(state["patient_id"], n=7)
     return {"pipeline_result": result, "past_alerts": past}
 
