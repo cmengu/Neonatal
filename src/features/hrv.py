@@ -19,6 +19,7 @@ The keys returned by ``compute_hrv_features()`` must stay in sync with that list
 import numpy as np
 from scipy import signal, interpolate
 from scipy.integrate import trapezoid as _trapz  # np.trapz removed in NumPy 2.0
+from scipy.spatial import cKDTree
 
 # --- SampEn parameters ---------------------------------------------------------
 # Neonatal defaults from the #10 research gate: m=3 (Lake 2002, PMID 12185014),
@@ -90,6 +91,26 @@ def _compute_lf_hf(rr_ms: np.ndarray, fs_resample: float = 4.0) -> float:
     return float(lf_power / max(hf_power, 1e-9))
 
 
+def _causal_rolling_median(x: np.ndarray, win: int) -> np.ndarray:
+    """Causal rolling median: ``out[i] = median(x[max(0, i-win) : i+1])``.
+
+    Replaces the per-sample Python loop (the dominant SampEn cost once the pair
+    count is vectorised, issue #45) with a strided window-view median for the
+    steady state, computing only the first ``win`` expanding-window medians in
+    Python. Bit-identical to the loop it replaces — the ``_preprocess`` golden
+    test pins this.
+    """
+    n = len(x)
+    out = np.empty(n, dtype=np.float64)
+    head = min(win, n)
+    for i in range(head):  # expanding window x[0:i+1] until the window fills
+        out[i] = np.median(x[: i + 1])
+    if win < n:  # steady state: fixed window of win+1 samples ending at i
+        windows = np.lib.stride_tricks.sliding_window_view(x, win + 1)  # (n-win, win+1)
+        out[win:] = np.median(windows, axis=1)
+    return out
+
+
 def _preprocess_for_entropy(rr_ms: np.ndarray) -> np.ndarray:
     """Artifact-reject then detrend an RR series before computing SampEn.
 
@@ -107,9 +128,7 @@ def _preprocess_for_entropy(rr_ms: np.ndarray) -> np.ndarray:
         return x
 
     win = min(_SAMPEN_DETREND_WIN, len(x))
-    local_med = np.array(
-        [np.median(x[max(0, i - win) : i + 1]) for i in range(len(x))]
-    )
+    local_med = _causal_rolling_median(x, win)
     keep = np.abs(x - local_med) <= _SAMPEN_ARTIFACT_FRAC * local_med
     x = x[keep]
     if len(x) < 5:
@@ -120,6 +139,27 @@ def _preprocess_for_entropy(rr_ms: np.ndarray) -> np.ndarray:
     baseline = np.convolve(np.pad(x, win // 2, mode="edge"), kernel, mode="valid")
     baseline = baseline[: len(x)]
     return x - baseline
+
+
+def _count_close_pairs(templates: np.ndarray, r: float) -> int:
+    """Count unordered template pairs (i<j, no self-match) within Chebyshev distance ``r``.
+
+    The original SampEn scan is O(n²) with a Python row-loop — ~7 s on a 4096-beat
+    window (issue #45). A materialised-broadcast version is still O(n²) and
+    memory-bound, so it wins nothing. Instead we index the templates in a KD-tree
+    and count neighbours under the Chebyshev (``p=∞``) metric — O(n log n) build,
+    and sparse for the small SampEn tolerance (``r = 0.2·SD``), so the count is
+    fast. ``count_neighbors`` returns ordered pairs *including* the diagonal
+    (every point matches itself, distance 0 ≤ r), so the unordered no-self count
+    is ``(total − n) / 2`` — the same integer the row-loop produced (same
+    templates, same ``≤ r``); the equivalence tests pin this bit-for-bit.
+    """
+    n = len(templates)
+    if n < 2:
+        return 0
+    tree = cKDTree(np.ascontiguousarray(templates))
+    total = int(tree.count_neighbors(tree, r, p=np.inf))  # ordered pairs incl. self, dist ≤ r
+    return (total - n) // 2
 
 
 def _sampen(rr_ms: np.ndarray, m: int = SAMPEN_M, r_factor: float = SAMPEN_R_FACTOR) -> float:
@@ -145,12 +185,8 @@ def _sampen(rr_ms: np.ndarray, m: int = SAMPEN_M, r_factor: float = SAMPEN_R_FAC
 
     def _count_matches(mm: int) -> int:
         # Number of i<j template pairs within Chebyshev distance r (no self-match).
-        templates = np.array([x[i : i + mm] for i in range(n - mm + 1)])
-        total = 0
-        for i in range(len(templates) - 1):
-            dist = np.max(np.abs(templates[i + 1 :] - templates[i]), axis=1)
-            total += int(np.count_nonzero(dist <= r))
-        return total
+        templates = np.lib.stride_tricks.sliding_window_view(x, mm)
+        return _count_close_pairs(templates, r)
 
     b = _count_matches(m)
     a = _count_matches(m + 1)
