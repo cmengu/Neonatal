@@ -21,11 +21,19 @@ class FakeGraph:
         return {"final_alert": self._alert}
 
 
-def _alert(concern="YELLOW", risk=0.62, confidence=0.8, reasoning="reduced RMSSD vs baseline"):
+def _alert(
+    concern="YELLOW", risk=0.62, confidence=0.8, reasoning="reduced RMSSD vs baseline",
+    recommended_action="Increase monitoring frequency",
+    primary_indicators=("rmssd", "sdnn"),
+    retrieved_context=("NICE NG195 §1.7 — sepsis risk factors",),
+):
     # Mimics the fields RagVerdictAssessor reads off a NeonatalAlert.
     return SimpleNamespace(
         concern_level=concern, risk=risk, confidence=confidence,
         clinical_reasoning=reasoning,
+        recommended_action=recommended_action,
+        primary_indicators=list(primary_indicators),
+        retrieved_context=list(retrieved_context),
     )
 
 
@@ -37,6 +45,19 @@ def test_maps_neonatal_alert_to_assessment():
     assert a.confidence == 0.85
     assert a.rationale == "apnoeic bradycardia"
     assert a.source == "rag"
+
+
+def test_carries_action_indicators_and_citations_through_the_seam():
+    # #23: the seam must stop collapsing away the very fields the API bypassed it to recover.
+    graph = FakeGraph(_alert(
+        recommended_action="Blood culture and CBC with differential",
+        primary_indicators=("sampen", "sample_asymmetry"),
+        retrieved_context=("AAP/COFN preterm sepsis pathway", "HeRO HRC adjunct note"),
+    ))
+    a = RagVerdictAssessor(graph=graph).assess(AssessmentContext(patient_id="infant9"))
+    assert a.recommended_action == "Blood culture and CBC with differential"
+    assert a.primary_indicators == ["sampen", "sample_asymmetry"]
+    assert a.citations == ["AAP/COFN preterm sepsis pathway", "HeRO HRC adjunct note"]
 
 
 def test_passes_patient_id_to_the_graph():

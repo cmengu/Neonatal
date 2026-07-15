@@ -29,6 +29,9 @@ class _FakeGraph:
                 risk=0.9,
                 confidence=0.8,
                 clinical_reasoning="fake escalate-only RAG review of the deviation",
+                recommended_action="Notify attending neonatologist",
+                primary_indicators=["rmssd"],
+                retrieved_context=["NICE NG195 — fake citation"],
             )
         }
 
