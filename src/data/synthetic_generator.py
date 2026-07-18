@@ -1,8 +1,13 @@
-"""Generate synthetic PipelineResult objects for agent testing and eval.
+"""Generate synthetic ``AssessmentView`` objects for LoRA-tooling / offline use.
 
-All 10 HRV_FEATURE_COLS are generated with literature-based neonatal distributions.
-Values are clamped to physiological minimums to prevent negative HRV values.
-Deterministic per patient_id — same ID always produces the same result.
+All HRV_FEATURE_COLS are generated with literature-based neonatal distributions. Values are
+clamped to physiological minimums to prevent negative HRV values. Deterministic per
+patient_id — same ID always produces the same result.
+
+Post-#7 this emits an ``AssessmentView`` (the retired ONNX ``PipelineResult`` is gone): the
+concern ``level`` is derived from the personalised z-scores by the real Tier-1
+``DeviationAssessor`` (not an ONNX probability), and ``risk`` is a synthetic
+abnormality-departure magnitude in [0, 1].
 
 Sources: Fyfe et al. 2003, Goulding et al. 2015 (PMC), Longin et al. 2005.
 """
@@ -15,8 +20,10 @@ import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
+from src.agent.state import AssessmentView
+from src.assessment.deviation import DeviationAssessor
+from src.assessment.types import AssessmentContext
 from src.features.constants import HRV_FEATURE_COLS
-from src.pipeline.result import BradycardiaEvent, PipelineResult
 
 # Population HRV distributions for premature neonates by gestational age.
 # (mu, sigma) per feature — sigma is between-patient SD, not within-window spread.
@@ -133,27 +140,22 @@ def generate_synthetic_result(
     }
 
     if sepsis:
-        risk_score = float(np.clip(rng.normal(0.80 * sepsis_severity, 0.06), 0.60, 0.97))
+        risk = float(np.clip(rng.normal(0.80 * sepsis_severity, 0.06), 0.60, 0.97))
     else:
-        risk_score = float(np.clip(rng.normal(0.15, 0.08), 0.02, 0.38))
+        risk = float(np.clip(rng.normal(0.15, 0.08), 0.02, 0.38))
 
-    # Bradycardia: HR < 100bpm → RR > 600ms. Mean 620ms is moderately bradycardic
-    # against the corrected neonatal baseline of ~417–450ms (HR ~133–144bpm).
-    events = [
-        BradycardiaEvent(
-            timestamp_idx=i * 100,
-            rr_interval_ms=float(max(rng.normal(620, 20), 601.0)),
-            duration_beats=1,
-        )
-        for i in range(n_brady_events)
-    ]
+    # Concern level from the *real* deterministic Tier-1 assessor over the synthetic z-scores
+    # (post-#7 there is no ONNX probability to threshold).
+    dev = DeviationAssessor().assess(
+        AssessmentContext(patient_id=patient_id, z_scores=z_scores, hrv_values=hrv_values)
+    )
 
-    return PipelineResult(
+    return AssessmentView(
         patient_id=patient_id,
-        risk_score=risk_score,
-        risk_level=PipelineResult.level_from_score(risk_score),
+        level=dev.level.value,
+        risk=risk,
         z_scores=z_scores,
         hrv_values=hrv_values,
         personal_baseline=personal_baseline,
-        detected_events=events,
+        n_events=n_brady_events,
     )

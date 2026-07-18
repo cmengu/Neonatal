@@ -1,10 +1,10 @@
 """NeonatalGuard FastAPI — production API layer.
 
 Endpoints:
-    POST /assess/{patient_id}            — blocking multi-agent alert (populates latency_ms)
+    POST /assess/{patient_id}            — production Verdict Cascade (Tier 1 floor + Tier 2 + Tier 3)
     GET  /assess/{patient_id}/stream     — SSE streaming per-specialist progress
-    GET  /patient/{patient_id}/history   — last N alerts from SQLite audit.db
     POST /assess/{patient_id}/generalist — generalist agent for A/B comparison
+    GET  /patient/{patient_id}/history   — last N alerts from SQLite audit.db
     GET  /health                         — FIX-12 distribution + FIX-13 chunk count
 
 Startup: preloads ClinicalKnowledgeBase singleton before first request.
@@ -32,7 +32,8 @@ if str(REPO_ROOT) not in sys.path:
 
 from src.agent.graph import _get_kb, agent, multi_agent
 from src.agent.schemas import NeonatalAlert
-from src.assessment import DeviationAssessor, VerdictCascade, load_context
+from src.assessment.runtime import assess_patient
+from src.assessment.types import Verdict
 
 DB_PATH = REPO_ROOT / "data" / "audit.db"
 
@@ -111,8 +112,8 @@ async def _sse_generator(patient_id: str):
             if name == "supervisor":
                 pr = output.get("pipeline_result")
                 if pr:
-                    payload["risk_score"] = pr.risk_score
-                    payload["risk_level"] = pr.risk_level
+                    payload["risk"] = pr.risk
+                    payload["risk_level"] = pr.level
 
             elif name == "signal":
                 sa = output.get("signal_assessment")
@@ -134,31 +135,34 @@ async def _sse_generator(patient_id: str):
             yield f"data: {json.dumps(payload, default=str)}\n\n"
 
 
-# Verdict Cascade — deterministic Tier 1 (Deviation floor) for now.
-# Tier 2 (Temporal) and Tier 3 (RAG) land in later tickets behind the same seam.
-_CASCADE = VerdictCascade(tiers=[DeviationAssessor()])
-
-
 # ─────────────────────────── endpoints ──────────────────────────
 
-@app.post("/assess/{patient_id}", response_model=NeonatalAlert)
-def assess(patient_id: str) -> NeonatalAlert:
-    """Blocking multi-agent assessment. Returns full NeonatalAlert JSON."""
-    return _invoke_blocking(multi_agent, patient_id)
+@app.post("/assess/{patient_id}", response_model=Verdict)
+def assess(patient_id: str) -> Verdict:
+    """Production assessment — the full Verdict Cascade behind the Safety Floor (#25).
 
+    Routes through ``assess_patient`` so every request runs Tier 1 (the deterministic
+    Deviation floor) + Tier 2 (CUSUM Drift) + Tier 3 (the RAG graph, escalate-only and
+    short-circuited on a clean GREEN window). The floor now applies in production: no tier —
+    not even the LLM — can lower the verdict below the deterministic minimum. The multi-agent
+    graph is Tier 3 behind the cascade, nothing more; it no longer serves the verdict directly.
 
-@app.post("/assess/{patient_id}/cascade")
-def assess_cascade(patient_id: str) -> dict:
-    """Verdict Cascade assessment — a deterministic Verdict from the Tier 1 floor.
-
-    Computed from the infant's personalised z-scores with no ONNX and no LLM. This is
-    the new Assessor seam that will replace the classifier-driven verdict path.
+    Post-#23 the ``Verdict`` carries ``recommended_action`` / ``primary_indicators`` /
+    ``citations`` (lifted from the headline assessment), so a caller reading only the Verdict
+    recovers everything the old bare-graph ``NeonatalAlert`` exposed — the reason ``/assess``
+    used to bypass the cascade is gone.
     """
+    t0 = time.perf_counter()
     try:
-        context = load_context(patient_id)
+        verdict = assess_patient(patient_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return _CASCADE.assess(context).model_dump(mode="json")
+    logging.info(
+        "assess %s → %s (floor %s) in %.1f ms",
+        patient_id, verdict.level.value, verdict.safety_floor.value,
+        (time.perf_counter() - t0) * 1000.0,
+    )
+    return verdict
 
 
 @app.post("/assess/{patient_id}/generalist", response_model=NeonatalAlert)
@@ -190,7 +194,7 @@ def patient_history(patient_id: str, n: int = 10) -> list[dict]:
         with sqlite3.connect(str(DB_PATH)) as conn:
             rows = conn.execute(
                 """
-                SELECT timestamp, concern_level, risk_score,
+                SELECT timestamp, concern_level, risk,
                        top_feature, top_z_score,
                        signal_pattern, brady_classification, agent_version
                 FROM alert_history
@@ -203,7 +207,7 @@ def patient_history(patient_id: str, n: int = 10) -> list[dict]:
         cols = [
             "timestamp",
             "concern_level",
-            "risk_score",
+            "risk",
             "top_feature",
             "top_z_score",
             "signal_pattern",

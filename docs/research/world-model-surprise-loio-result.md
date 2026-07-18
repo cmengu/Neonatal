@@ -15,6 +15,44 @@ guardrails. This document is the *engineering result* of acting on it.
 
 ## Headline
 
+> **⚠️ SUPERSEDED — the 0.515 headline below was measured on the confounded data. Issue #18
+> is now resolved and the harness re-run on corrected data gives a different verdict. See the
+> UPDATE block immediately below; the original text is retained for the record.**
+
+### UPDATE (2026-07-15, issue #18 resolved) — valid re-run on corrected data
+
+The two data-integrity defects flagged in §"The confound" (bradycardia scrubbed by the
+global-median RR filter; event labels misaligned by a hardcoded 500 Hz + missing trim offset)
+are fixed: RR is rebuilt from the `.qrsc` reference peaks with a physiological band that keeps
+bradycardia, and `.atr` onsets are aligned to windows via carried raw-sample beat positions
+(per-infant fs, no cumsum drift). At the labelled event windows `mean_rr` is now clearly
+elevated over baseline (e.g. infant1 485 ms vs 389 ms; infant2 565 ms vs 462 ms) and each
+infant's labelled-window count equals its `.atr` onset count — the signal the old pipeline
+destroyed is present again.
+
+**Valid pooled LOIO AUC (lead vs baseline) = 0.635.** Per-infant AUCs span **0.567–0.637**
+(mean 0.614, median 0.617) — **every** infant scores above chance under leave-one-infant-out,
+on 621 events / 3,105 lead vs 115,157 baseline windows. 322/621 events show a pre-onset
+Surprise rise (median lead 1 window ≈ 10 s). Features and protocol are unchanged from the
+original run (`mean_rr_dev, sdnn_dev, rmssd_dev, rr_ms_max_dev, rr_ms_75%_dev`; lead=5,
+guard=30) — the *only* variable changed is the data-integrity fix.
+
+**Revised reading:** Surprise carries **real but modest** lead-time signal once the target is
+intact. The original "at-chance ⇒ not wired" verdict was an artifact of the confound, not a
+property of Surprise. Whether 0.635 clears the gate's wiring bar (and under what CUSUM-adjunct
+guardrails) is a decision for the #6/gate owner — this document only re-establishes the
+*valid number*. Re-run artifacts: `data/processed/world_model_loio_results.json`,
+`docs/research/assets/world-model-surprise-loio.png` (branch `feat/onnx-cutover`).
+
+*Caveat:* the re-run reproduces the original **10-feature (pre-#13) schema** that this result
+and `FORECAST_FEATURES` both use; issue #13's `sampen`/`sample_asymmetry` are excluded (they
+are unused by the harness and never ran on the cohort — `_sampen` over the 4096-beat window
+costs ~6.9 s/window ≈ 30 h/infant, a separate performance defect).
+
+---
+
+<sub>Original headline (confounded data — superseded):</sub>
+
 **Pooled LOIO AUC (lead-window vs baseline) = 0.515** — indistinguishable from chance
 (0.500). Per-infant AUCs span 0.47–0.53; mean 0.50.
 

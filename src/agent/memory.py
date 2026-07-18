@@ -24,7 +24,7 @@ class PastAlert:
 
     timestamp: str
     concern_level: str
-    risk_score: float
+    risk: float
     top_feature: str
     top_z_score: float
 
@@ -52,7 +52,7 @@ class EpisodicMemory:
                     patient_id           TEXT,
                     timestamp            TEXT,
                     concern_level        TEXT,
-                    risk_score           REAL,
+                    risk                 REAL,
                     top_feature          TEXT,
                     top_z_score          REAL,
                     z_scores_json        TEXT,
@@ -69,6 +69,7 @@ class EpisodicMemory:
             # Phase 5 adds specialist columns + schema_meta).
             # ALTER TABLE ADD COLUMN raises OperationalError on re-run — try/except is safe.
             for col_def in (
+                "risk                 REAL",
                 "z_scores_json        TEXT",
                 "hrv_values_json      TEXT",
                 "signal_pattern       TEXT",
@@ -93,11 +94,11 @@ class EpisodicMemory:
                 """
             )
             conn.execute(
-                "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('version', '2.0')"
+                "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('version', '3.0')"
             )
 
     def _check_schema_version(self) -> None:
-        """Raise RuntimeError if audit.db schema version is not 2.0.
+        """Raise RuntimeError if audit.db schema version is not 3.0.
 
         Protects against accidentally using a Phase 3/4 database that lacks
         the specialist output columns added in Phase 5.
@@ -109,9 +110,9 @@ class EpisodicMemory:
             row = conn.execute(
                 "SELECT value FROM schema_meta WHERE key='version'"
             ).fetchone()
-        if not row or row[0] != "2.0":
+        if not row or row[0] != "3.0":
             raise RuntimeError(
-                f"audit.db schema version mismatch: expected '2.0', got {row[0] if row else 'None'}. "
+                f"audit.db schema version mismatch: expected '3.0', got {row[0] if row else 'None'}. "
                 "Run: python -c \"from src.agent.memory import EpisodicMemory; EpisodicMemory()\" "
                 "to apply the Phase 5 migration."
             )
@@ -121,7 +122,7 @@ class EpisodicMemory:
         with sqlite3.connect(self.db_path) as conn:
             rows = conn.execute(
                 """
-                SELECT timestamp, concern_level, risk_score, top_feature, top_z_score
+                SELECT timestamp, concern_level, risk, top_feature, top_z_score
                 FROM alert_history
                 WHERE patient_id = ?
                 ORDER BY timestamp DESC
@@ -169,7 +170,7 @@ class EpisodicMemory:
             conn.execute(
                 """
                 INSERT INTO alert_history
-                (patient_id, timestamp, concern_level, risk_score,
+                (patient_id, timestamp, concern_level, risk,
                  top_feature, top_z_score, z_scores_json, hrv_values_json,
                  signal_pattern, signal_confidence,
                  brady_classification, brady_weight, agent_version)
@@ -179,7 +180,7 @@ class EpisodicMemory:
                     alert.patient_id,
                     alert.timestamp.isoformat(),
                     alert.concern_level,
-                    alert.risk_score,
+                    alert.risk,
                     top_feature,
                     top_z,
                     json.dumps(z_scores) if z_scores is not None else None,

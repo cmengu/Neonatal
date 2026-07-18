@@ -31,17 +31,45 @@ def test_health_returns_ok():
     assert "prediction_health" in data
 
 
-def test_assess_blocking_infant1():
-    """Blocking endpoint returns a NeonatalAlert with concern_level and latency_ms."""
+def test_assess_routes_through_cascade(monkeypatch):
+    """POST /assess now returns the full Verdict Cascade result behind the Safety Floor (#25):
+    a Verdict with the tier trail, the effective floor, and — post-#23 — the traceable detail
+    (recommended_action / primary_indicators / citations) the bare graph used to be bypassed for.
+
+    The cascade is patched onto an in-memory CUSUM store so the test never mutates the real
+    audit.db drift state (production still uses the persisted SqliteCusumStore)."""
+    import api.main as main_mod
+    from src.assessment.context import load_context
+    from src.assessment.cusum import InMemoryCusumStore
+    from src.assessment.runtime import default_cascade
+
+    def _hermetic_assess(pid: str):
+        return default_cascade(cusum_store=InMemoryCusumStore()).assess(load_context(pid))
+
+    monkeypatch.setattr(main_mod, "assess_patient", _hermetic_assess)
+
     r = client.post("/assess/infant1")
     assert r.status_code == 200
     data = r.json()
-    assert data["concern_level"] in ("RED", "YELLOW", "GREEN"), (
-        f"Unexpected concern_level: {data['concern_level']}"
-    )
+    # Verdict shape — level (not concern_level), the floor, and the tier trail.
+    assert data["level"] in ("RED", "YELLOW", "GREEN")
     assert data["patient_id"] == "infant1"
-    assert data.get("latency_ms") is not None, "latency_ms not populated by API layer"
-    assert isinstance(data["latency_ms"], float)
+    assert data["safety_floor"] in ("RED", "YELLOW", "GREEN")
+    assert len(data["assessments"]) >= 1
+    assert data["assessments"][0]["source"] == "deviation"
+    # The verdict is never below the floor (the FNR=0 guarantee applied in production).
+    order = {"GREEN": 0, "YELLOW": 1, "RED": 2}
+    assert order[data["level"]] >= order[data["safety_floor"]]
+    # Post-#23 traceable detail is present on the Verdict (keys always serialised).
+    assert "recommended_action" in data
+    assert "primary_indicators" in data
+    assert "citations" in data
+
+
+def test_assess_unknown_patient_returns_404():
+    """A patient with no processed CSVs yields 404, not a 500."""
+    r = client.post("/assess/PATIENT_THAT_DOES_NOT_EXIST_XYZ")
+    assert r.status_code == 404
 
 
 def test_assess_generalist_returns_concern_level():
@@ -51,18 +79,6 @@ def test_assess_generalist_returns_concern_level():
     data = r.json()
     assert "concern_level" in data
     assert data["concern_level"] in ("RED", "YELLOW", "GREEN")
-
-
-def test_assess_cascade_returns_verdict():
-    """Cascade endpoint returns a Verdict with a valid concern level and the tier trail."""
-    r = client.post("/assess/infant1/cascade")
-    assert r.status_code == 200
-    data = r.json()
-    assert data["level"] in ("RED", "YELLOW", "GREEN")
-    assert data["patient_id"] == "infant1"
-    assert data["safety_floor"] in ("RED", "YELLOW", "GREEN")
-    assert len(data["assessments"]) >= 1
-    assert data["assessments"][0]["source"] == "deviation"
 
 
 def test_history_empty_for_unknown_patient():
