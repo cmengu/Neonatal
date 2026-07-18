@@ -1,0 +1,66 @@
+[
+  {
+    "tag": "h4_base",
+    "cfg": {
+      "D": 48,
+      "Lc": 24,
+      "H": 4,
+      "mask": 0.0
+    },
+    "novelty_auc": 0.701,
+    "surprise_auc": 0.539,
+    "var_auc": 0.527,
+    "demo_sep_rise": 0.291,
+    "demo_surp_rise": -0.014,
+    "demo_dev_rise": 0.244,
+    "embed_std": 1.02
+  },
+  {
+    "tag": "h16",
+    "cfg": {
+      "D": 48,
+      "Lc": 24,
+      "H": 16,
+      "mask": 0.0
+    },
+    "novelty_auc": 0.674,
+    "surprise_auc": 0.606,
+    "var_auc": 0.527,
+    "demo_sep_rise": 0.421,
+    "demo_surp_rise": -0.0274,
+    "demo_dev_rise": 0.244,
+    "embed_std": 1.018
+  },
+  {
+    "tag": "h16_m50",
+    "cfg": {
+      "D": 48,
+      "Lc": 24,
+      "H": 16,
+      "mask": 0.5
+    },
+    "novelty_auc": 0.678,
+    "surprise_auc": 0.675,
+    "var_auc": 0.527,
+    "demo_sep_rise": 0.442,
+    "demo_surp_rise": 0.007,
+    "demo_dev_rise": 0.244,
+    "embed_std": 1.018
+  },
+  {
+    "tag": "h24_m50",
+    "cfg": {
+      "D": 48,
+      "Lc": 24,
+      "H": 24,
+      "mask": 0.5
+    },
+    "novelty_auc": 0.672,
+    "surprise_auc": 0.647,
+    "var_auc": 0.527,
+    "demo_sep_rise": 0.381,
+    "demo_surp_rise": -0.0177,
+    "demo_dev_rise": 0.244,
+    "embed_std": 1.018
+  }
+]

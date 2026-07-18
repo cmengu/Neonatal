@@ -8,7 +8,11 @@
  * visual density but flagged real: false so the UI marks them "simulated".
  */
 
-import { Trace } from "./trace-types";
+import { Trace, WorldModel } from "./trace-types";
+// Real JEPA world-model block (#60), exported by scripts/export_jepa_trace.py from the
+// trained checkpoint on infant7 [1240,1419]. The one part of this fixture that is NOT
+// synthesised — real embeddings, real novelty/surprise, on the shared grid.
+import worldModelInfant7 from "./world-model-infant7.json";
 
 const N = 180;
 const ONSET = 90;
@@ -180,7 +184,7 @@ const H = 5.0;
 const crossingIdx = cPlus.findIndex((v) => v >= H);
 
 export const MOCK_TRACE_INFANT7: Trace = {
-  schema_version: "1.0.0",
+  schema_version: "1.1.0",
   patient_id: "infant7",
   generated_at: "2026-07-15T04:12:00Z",
   source_commit: "mock-fixture",
@@ -284,4 +288,6 @@ export const MOCK_TRACE_INFANT7: Trace = {
     rationale:
       "HARD RED floor set by concordant HRV deviation, confirmed as a sustained drift by CUSUM and grounded against sepsis guidelines by the reasoning tier. Escalated by the deviation tier; the floor holds RED through every downstream tier.",
   },
+  // The real spine (decision 4): actual JEPA embeddings on the shared grid, not synthesised.
+  world_model: worldModelInfant7 as unknown as WorldModel,
 };

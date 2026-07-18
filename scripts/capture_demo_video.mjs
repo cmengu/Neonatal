@@ -1,60 +1,82 @@
-// Backup demo video for the MGC pitch (#53) — drives the exact walkthrough
-// decided in #51 against the offline production build on localhost:3453,
-// recording at 1920x1080.
+// Capture the showtime demo off the OFFLINE prod build → docs/demo/showtime-demo.webm (#67).
+//
+// Mirrors the map-#22 docs/demo/ pattern: drive the real page with Playwright so the backup
+// video is the exact same run the audience would see live. It opens the ward, drills into
+// infant7, clicks the ✨ demo control, and records the full choreography.
+//
+// Usage (from the repo root, with the offline prod server already running):
+//   cd dashboard && npx next build && npx next start -p 3000 &
+//   npx playwright install chromium
+//   node scripts/capture_demo_video.mjs
+//
+// Env: DEMO_URL (default http://localhost:3000), DEMO_SECONDS (default 60 — matches the
+// choreography's 52 s + a tail for the "Explore" beat).
+
 import { chromium } from "playwright";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+import { mkdir, rename, readdir } from "node:fs/promises";
 
-const BASE = process.env.DEMO_BASE ?? "http://localhost:3453";
-const OUT_DIR = process.env.OUT_DIR ?? "./video";
-const hold = (ms) => new Promise((r) => setTimeout(r, ms));
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const OUT_DIR = join(REPO_ROOT, "docs", "demo");
+const RAW_DIR = join(OUT_DIR, ".raw");
+const BASE = process.env.DEMO_URL ?? "http://localhost:3000";
+const SECONDS = Number(process.env.DEMO_SECONDS ?? 60);
 
-const browser = await chromium.launch();
-const ctx = await browser.newContext({
-  viewport: { width: 1920, height: 1080 },
-  recordVideo: { dir: OUT_DIR, size: { width: 1920, height: 1080 } },
-  colorScheme: "dark",
-});
-const page = await ctx.newPage();
+async function main() {
+  await mkdir(RAW_DIR, { recursive: true });
 
-// 1 — ward grid: all beds render, Infant 07 pulsing RED
-await page.goto(BASE + "/", { waitUntil: "networkidle" });
-await page.waitForSelector(".animate-pulse-ring", { timeout: 15000 });
-await hold(6000);
+  const browser = await chromium.launch();
+  const context = await browser.newContext({
+    viewport: { width: 1920, height: 1080 },
+    deviceScaleFactor: 2,
+    reducedMotion: "no-preference", // let the auto-rotate + ripple play
+    recordVideo: { dir: RAW_DIR, size: { width: 1920, height: 1080 } },
+  });
+  const page = await context.newPage();
 
-// 2 — click the RED bed → client-nav to the trace
-await page.locator(".animate-pulse-ring").first().click();
-await page.waitForURL("**/trace/infant7", { timeout: 10000 });
+  console.log(`→ ward ${BASE}/`);
+  await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(2500); // hold on the "one turning" establishing shot
 
-// 3 — staged reveal auto-runs (5 nodes x 700ms), then the playhead sweeps
-await page.waitForSelector("#n-t1", { timeout: 15000 });
-await hold(11000);
+  console.log("→ drill into infant7");
+  const bed = page.getByRole("link", { name: /Infant 07/i });
+  if (await bed.count()) await bed.first().click();
+  else await page.goto(`${BASE}/showtime/infant7`, { waitUntil: "networkidle" });
 
-// 4 — fit the whole pipeline in view
-await page.getByRole("button", { name: /fit all/ }).click();
-await hold(4500);
+  await page.waitForSelector("text=JEPA latent embedding", { timeout: 15000 });
+  await page.waitForTimeout(1500);
 
-// 5 — open the Tier 3 drawer: retrieve · reason · self-check + citations
-await page.locator("#n-t3").click();
-await hold(8000);
+  console.log("→ start choreographed demo");
+  const demoBtn = page.getByTitle("choreographed demo");
+  await demoBtn.click();
 
-// 6 — verdict node → full report modal
-await page.getByText("click for full report").click();
-await page.getByText("How this verdict was reached").waitFor({ timeout: 5000 });
-await hold(7000);
+  console.log(`→ recording ${SECONDS}s of choreography…`);
+  await page.waitForTimeout(SECONDS * 1000);
 
-// close the modal (Escape, with a ✕/close-button fallback)
-await page.keyboard.press("Escape");
-await hold(400);
-if (await page.getByText("How this verdict was reached").isVisible().catch(() => false)) {
-  await page.locator("button", { hasText: /✕|×|Close/i }).first().click().catch(() => {});
+  // Finalise: closing the context flushes the video file, then we give it a stable name.
+  const video = page.video();
+  await context.close();
+  await browser.close();
+
+  if (video) {
+    const target = join(OUT_DIR, "showtime-demo.webm");
+    try {
+      await video.saveAs(target);
+      console.log(`✓ wrote ${target}`);
+    } catch {
+      // fallback: grab whatever landed in RAW_DIR
+      const files = (await readdir(RAW_DIR)).filter((f) => f.endsWith(".webm"));
+      if (files[0]) {
+        await rename(join(RAW_DIR, files[0]), target);
+        console.log(`✓ wrote ${target}`);
+      }
+    }
+  }
+  console.log("Transcode to mp4 if the venue needs it:  ffmpeg -i docs/demo/showtime-demo.webm docs/demo/showtime-demo.mp4");
 }
-await hold(1000);
 
-// 7 — Escalate → "Attending paged" toast
-await page.getByRole("button", { name: "Escalate" }).click();
-await page.getByText("Attending paged").waitFor({ timeout: 5000 });
-await hold(4000);
-
-await ctx.close(); // flushes the video
-const path = await page.video().path();
-console.log("VIDEO:" + path);
-await browser.close();
+main().catch((err) => {
+  console.error("capture failed:", err);
+  process.exit(1);
+});
