@@ -33,7 +33,7 @@ def default_cascade(cusum_store=None, rag_graph=None, jepa=None) -> VerdictCasca
 
     ``cusum_store`` defaults to the persisted ``SqliteCusumStore`` (``data/audit.db``) so
     drift survives restarts; inject ``InMemoryCusumStore`` / a fake for tests. ``rag_graph``
-    is passed through to the RAG tier so tests can inject a fake graph (no Groq/Qdrant).
+    is passed through to the RAG tier so tests can inject a fake graph (no Anthropic/Qdrant).
 
     **Why the world model ships observational, not voting.** Its onset-anticipation AUC of
     0.772 is held-out and label-free, but it is a 10-infant result with no calibrated alarm

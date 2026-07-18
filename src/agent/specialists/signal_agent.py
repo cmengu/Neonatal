@@ -9,7 +9,7 @@ specialist from conflating autonomic pattern reading with action selection
 (the primary cause of YELLOW/GREEN confusion in the generalist).
 
 In EVAL_NO_LLM mode: returns deterministic SignalAssessment from risk_score
-and max z-score without any Groq call — CI gate works without API key.
+and max z-score without any LLM call — CI gate works without API key.
 """
 from __future__ import annotations
 
@@ -180,12 +180,12 @@ def signal_agent_node(state: dict) -> dict:
     if os.getenv("EVAL_NO_LLM", "").lower() in {"1", "true", "yes"}:
         return {"signal_assessment": _rule_based_signal(r.level, max_z)}
 
-    # USE_LORA_SIGNAL: route to local Phi-3-mini LoRA adapter (no Groq call).
-    # Priority: EVAL_NO_LLM (CI, rule-based) > USE_LORA_SIGNAL (LoRA) > default (Groq).
+    # USE_LORA_SIGNAL: route to local Phi-3-mini LoRA adapter (no API call).
+    # Priority: EVAL_NO_LLM (CI, rule-based) > USE_LORA_SIGNAL (LoRA) > default (Anthropic).
     if os.getenv("USE_LORA_SIGNAL", "").lower() in {"1", "true", "yes"}:
         return {"signal_assessment": _lora_signal_inference(r)}
 
-    from src.agent.graph import _get_groq, _get_kb
+    from src.agent.graph import LLM_MAX_TOKENS, LLM_MODEL, _get_kb, _get_llm
 
     top3 = r.get_top_deviated(3)
     query = (
@@ -214,11 +214,11 @@ Retrieved HRV reference knowledge:
 Classify the autonomic pattern and identify which features drove your assessment.
 Output a SignalAssessment."""
 
-    assessment: SignalAssessment = _get_groq().chat.completions.create(
-        model="llama-3.3-70b-versatile",
+    assessment: SignalAssessment = _get_llm().chat.completions.create(
+        model=LLM_MODEL,
         response_model=SignalAssessment,
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.1,
+        max_tokens=LLM_MAX_TOKENS,
         max_retries=3,
     )
     return {"signal_assessment": assessment}

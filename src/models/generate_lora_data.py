@@ -71,7 +71,7 @@ def _label_groq(r) -> SignalAssessment:
     """
     from dotenv import load_dotenv
     load_dotenv()
-    from src.agent.graph import _get_groq, _get_kb
+    from src.agent.graph import LLM_MAX_TOKENS, LLM_MODEL, _get_kb, _get_llm
 
     top3 = r.get_top_deviated(3)
     query = (
@@ -90,11 +90,11 @@ def _label_groq(r) -> SignalAssessment:
         f"Retrieved HRV reference:\n{context}\n\n"
         "Classify the autonomic pattern. Output a SignalAssessment."
     )
-    return _get_groq().chat.completions.create(
-        model="llama-3.3-70b-versatile",
+    return _get_llm().chat.completions.create(
+        model=LLM_MODEL,
         response_model=SignalAssessment,
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.1,
+        max_tokens=LLM_MAX_TOKENS,
         max_retries=3,
     )
 

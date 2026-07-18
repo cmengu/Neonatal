@@ -161,7 +161,7 @@ Each specialist retrieves domain-specific context. Two deviating signals → two
 ```bash
 git clone https://github.com/your-handle/neonatalguard
 cd neonatalguard
-cp .env.example .env          # add GROQ_API_KEY, LANGSMITH_API_KEY
+cp .env.example .env          # add ANTHROPIC_API_KEY, LANGSMITH_API_KEY
 docker-compose up              # starts neonatalguard-api + qdrant
 ```
 

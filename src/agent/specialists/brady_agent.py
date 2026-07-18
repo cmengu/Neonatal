@@ -61,7 +61,7 @@ def brady_agent_node(state: dict) -> dict:
     if os.getenv("EVAL_NO_LLM", "").lower() in {"1", "true", "yes"}:
         return {"bradycardia_assessment": _rule_based_brady(n_events)}
 
-    from src.agent.graph import _get_groq, _get_kb
+    from src.agent.graph import LLM_MAX_TOKENS, LLM_MODEL, _get_kb, _get_llm
 
     signal_ctx = ""
     sa = state.get("signal_assessment")
@@ -93,11 +93,11 @@ Retrieved bradycardia reference:
 
 Classify the bradycardia pattern and assign clinical weight. Output a BradycardiaAssessment."""
 
-    assessment: BradycardiaAssessment = _get_groq().chat.completions.create(
-        model="llama-3.3-70b-versatile",
+    assessment: BradycardiaAssessment = _get_llm().chat.completions.create(
+        model=LLM_MODEL,
         response_model=BradycardiaAssessment,
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.1,
+        max_tokens=LLM_MAX_TOKENS,
         max_retries=3,
     )
     return {"bradycardia_assessment": assessment}
