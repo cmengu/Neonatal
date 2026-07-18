@@ -118,3 +118,110 @@ def test_features_are_deterministic():
     f1 = compute_hrv_features(x[:50], rr_entropy=x)
     f2 = compute_hrv_features(x[:50], rr_entropy=x)
     assert f1 == f2
+
+
+# --- SampEn vectorisation equivalence (issue #45) ------------------------------
+# The production _sampen replaces an O(n^2) Python row-loop with a chunked,
+# fully-vectorised pair count. It must stay bit-identical to the original scan.
+# _sampen_reference below is a verbatim copy of that original algorithm; the tests
+# assert the production value equals it across sizes, seeds, and edge cases.
+
+
+def _preprocess_reference(rr_ms):
+    # Verbatim copy of the ORIGINAL _preprocess_for_entropy (pre-#45), so the
+    # equivalence tests remain independent of the production implementation and
+    # catch any drift when it is vectorised.
+    _SAMPEN_ARTIFACT_FRAC = 0.20
+    _SAMPEN_DETREND_WIN = 15
+    x = np.asarray(rr_ms, dtype=np.float64)
+    x = x[np.isfinite(x)]
+    if len(x) < 5:
+        return x
+    win = min(_SAMPEN_DETREND_WIN, len(x))
+    local_med = np.array(
+        [np.median(x[max(0, i - win) : i + 1]) for i in range(len(x))]
+    )
+    keep = np.abs(x - local_med) <= _SAMPEN_ARTIFACT_FRAC * local_med
+    x = x[keep]
+    if len(x) < 5:
+        return x
+    kernel = np.ones(win) / win
+    baseline = np.convolve(np.pad(x, win // 2, mode="edge"), kernel, mode="valid")
+    baseline = baseline[: len(x)]
+    return x - baseline
+
+
+def test_preprocess_for_entropy_matches_reference():
+    from src.features.hrv import _preprocess_for_entropy
+
+    for seed in range(40):
+        r = _rng(seed)
+        n = int(r.integers(3, 900))
+        rr = 400.0 + 40.0 * r.standard_normal(n)
+        if r.random() < 0.5:  # inject artifact spikes to exercise the rejection mask
+            idx = r.integers(0, n, size=max(1, n // 10))
+            rr[idx] += r.uniform(200.0, 600.0, size=len(idx))
+        got = _preprocess_for_entropy(rr)
+        exp = _preprocess_reference(rr)
+        assert got.shape == exp.shape, f"shape {got.shape} != {exp.shape} (seed {seed})"
+        assert np.allclose(got, exp, rtol=0, atol=1e-9), f"values differ (seed {seed})"
+
+
+def _sampen_reference(rr_ms, m=3, r_factor=0.2):
+    x = _preprocess_reference(rr_ms)
+    n = len(x)
+    if n < m + 2:
+        return float("nan")
+    r = r_factor * np.std(x, ddof=1)
+    if not np.isfinite(r) or r <= 0:
+        return float("nan")
+
+    def count(mm):
+        templates = np.array([x[i : i + mm] for i in range(n - mm + 1)])
+        total = 0
+        for i in range(len(templates) - 1):
+            dist = np.max(np.abs(templates[i + 1 :] - templates[i]), axis=1)
+            total += int(np.count_nonzero(dist <= r))
+        return total
+
+    b = count(m)
+    a = count(m + 1)
+    if b == 0 or a == 0:
+        return float("nan")
+    return float(-np.log(a / b))
+
+
+def _assert_sampen_equal(rr):
+    from src.features.hrv import _sampen
+
+    got, exp = _sampen(rr), _sampen_reference(rr)
+    if math.isnan(exp):
+        assert math.isnan(got), f"expected NaN, got {got}"
+    else:
+        assert math.isclose(got, exp, rel_tol=1e-12, abs_tol=1e-12), f"{got} != {exp}"
+
+
+def test_sampen_matches_reference_across_sizes_and_seeds():
+    # Varied lengths (incl. > block size to exercise chunking) and irregularity,
+    # with occasional bradycardia-like jumps so long-RR structure is present.
+    for seed in range(40):
+        r = _rng(seed)
+        n = int(r.integers(20, 900))
+        rr = 400.0 + 40.0 * r.standard_normal(n)
+        if r.random() < 0.5:
+            idx = r.integers(0, n, size=max(1, n // 20))
+            rr[idx] += r.uniform(150.0, 400.0, size=len(idx))
+        _assert_sampen_equal(rr)
+
+
+def test_sampen_matches_reference_large_window_over_block_boundary():
+    # ~1200 beats forces multiple row-blocks in the vectorised count.
+    rr = 420.0 + 30.0 * _rng(99).standard_normal(1200)
+    _assert_sampen_equal(rr)
+
+
+def test_sampen_matches_reference_on_edge_cases():
+    _assert_sampen_equal(np.array([]))                      # empty -> NaN
+    _assert_sampen_equal(np.array([400.0, 401.0, 402.0]))   # too short -> NaN
+    _assert_sampen_equal(np.full(60, 400.0))                # constant -> r<=0 -> NaN
+    _assert_sampen_equal(400.0 + _rng(3).standard_normal(50))  # small typical window
