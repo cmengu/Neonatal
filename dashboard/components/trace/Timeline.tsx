@@ -106,6 +106,12 @@ export function Timeline() {
       <div className="font-mono text-[13px] text-slate-200 whitespace-nowrap min-w-[128px] text-right">
         <b className="text-sky-400">{clock}</b>
         <span className="block text-[10px] text-slate-500 uppercase tracking-wide">{phase}</span>
+        <span
+          className="block text-[8.5px] text-slate-600"
+          title="Space play/pause · ←/→ step (Shift ×5) · Home/End jump · D demo"
+        >
+          ␣ ←→ D
+        </span>
       </div>
     </div>
   );

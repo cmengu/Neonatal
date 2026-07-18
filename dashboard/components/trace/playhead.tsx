@@ -181,6 +181,54 @@ export function PlayheadProvider({
     return () => cancelAnimationFrame(raf);
   }, [demo, grid.n, setP]);
 
+  // Keyboard control (demo-day ergonomics): drive the shared clock hands-free.
+  // Space play/pause · ←/→ step (Shift = ×5) · Home/End jump · D toggles demo-mode.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      const step = e.shiftKey ? 5 : 1;
+      const takeOver = () => {
+        stopDemo();
+        setPlayingCb(false);
+      };
+      switch (e.key) {
+        case " ":
+          e.preventDefault();
+          togglePlay();
+          break;
+        case "ArrowRight":
+          e.preventDefault();
+          takeOver();
+          setP(pRef.current + step);
+          break;
+        case "ArrowLeft":
+          e.preventDefault();
+          takeOver();
+          setP(pRef.current - step);
+          break;
+        case "Home":
+          e.preventDefault();
+          takeOver();
+          setP(0);
+          break;
+        case "End":
+          e.preventDefault();
+          takeOver();
+          setP(grid.n - 1);
+          break;
+        case "d":
+        case "D":
+          e.preventDefault();
+          if (demo) stopDemo();
+          else startDemo();
+          break;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [grid.n, togglePlay, setP, setPlayingCb, startDemo, stopDemo, demo]);
+
   const value: PlayheadState = {
     p,
     playing,
