@@ -58,6 +58,10 @@ function TopBar({ trace }: { trace: Trace }) {
   const { clock, phase } = usePlayhead();
   const v = trace.verdict;
   const vc = concernColor(v.level);
+  // Honesty marker (decision 3): the recorder (#31) isn't wired yet, so the tier/verdict
+  // series are a representative recorded fixture — only the 3-D world_model block is the real
+  // model output. Keyed off source_commit, so it self-clears the moment #31 serves a real trace.
+  const isFixture = trace.source_commit === "mock-fixture";
   return (
     <div className="glass flex h-14 items-center justify-between border-b border-white/[0.06] px-6">
       <div className="flex items-center gap-3">
@@ -66,6 +70,14 @@ function TopBar({ trace }: { trace: Trace }) {
         </span>
         <span className="text-[10px] uppercase tracking-[0.25em] text-slate-500">showtime</span>
         <span className="font-mono text-[11px] text-slate-500">· {trace.patient_id}</span>
+        {isFixture && (
+          <span
+            className="rounded border border-amber-500/40 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-amber-300/90"
+            title="Tier and verdict values are representative recorded-fixture data (live recorder #31 pending). The 3-D world model and the cascade logic are real."
+          >
+            recorded fixture
+          </span>
+        )}
       </div>
       <div className="flex items-center gap-4">
         <div className="font-mono text-[11px] text-slate-500">
