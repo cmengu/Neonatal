@@ -158,7 +158,13 @@ export interface WorldModel {
   embed_dim: number;
   pca: {
     fitted_on: "normal";
+    basis: "raw" | "whitened"; // "raw" ships; see export_jepa_trace.py for why whitening lost
     variance_explained: [number, number, number];
+    // Median share of the window's distance-from-normal that these 3 axes actually carry.
+    // `variance_explained` describes the basis; this describes how much of the *departure* a
+    // viewer can see. ~0.64 today — a third of the movement happens off-screen, which is why
+    // the warp is driven by novelty rather than by the dot's position.
+    novelty_captured: number;
     axis_labels: [string, string, string];
   };
   trajectory: WorldModelPoint[]; // length n — one point per grid window
