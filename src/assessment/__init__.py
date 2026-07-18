@@ -18,6 +18,7 @@ from src.assessment.cusum import (
     composite_deviation,
 )
 from src.assessment.deviation import DeviationAssessor, DeviationThresholds
+from src.assessment.jepa_surprise import JepaSurpriseAssessor
 from src.assessment.types import (
     Assessment,
     AssessmentContext,
@@ -32,6 +33,7 @@ __all__ = [
     "DeviationAssessor",
     "DeviationThresholds",
     "TemporalAssessor",
+    "JepaSurpriseAssessor",
     "CusumThresholds",
     "InMemoryCusumStore",
     "SqliteCusumStore",

@@ -33,8 +33,10 @@ FEATURES: tuple[str, ...] = (
 )
 
 # Personalised deviations are ~unit scale but can spike; clip so one pathological window can't
-# dominate the batch statistics the VICReg terms are computed from.
-_CLIP = 8.0
+# dominate the batch statistics the VICReg terms are computed from. Public because every
+# consumer feeding the model at inference (jepa_score, the JepaSurpriseAssessor) must
+# sanitise identically to training.
+CLIP = 8.0
 
 
 def load_infant_sequences(
@@ -48,7 +50,7 @@ def load_infant_sequences(
     for name, g in df.groupby("record_name"):
         x = g[list(FEATURES)].to_numpy(dtype=np.float32)
         x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
-        x = np.clip(x, -_CLIP, _CLIP)
+        x = np.clip(x, -CLIP, CLIP)
         feats[str(name)] = x
         labels[str(name)] = (
             g["label"].to_numpy(dtype=np.int64)
