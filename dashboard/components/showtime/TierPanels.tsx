@@ -16,8 +16,7 @@ import { DataChannel, Tier1, Tier1Feature, Tier2 } from "@/lib/trace-types";
 import { TraceChart, ChartSeries } from "@/components/trace/TraceChart";
 import { usePlayhead } from "@/components/trace/playhead";
 import { concernColor, fmt, valueAt } from "@/lib/trace-format";
-
-const TIER = { t1: "#38bdf8", t2: "#a78bfa" } as const;
+import { TIER } from "@/lib/theme";
 
 function NoirCard({
   accent,

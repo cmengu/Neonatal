@@ -23,10 +23,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { WorldModel } from "@/lib/trace-types";
 import { usePlayhead } from "@/components/trace/playhead";
+import { PHASE as PHASE_COLOR } from "@/lib/theme";
 
 type Vec3 = [number, number, number];
-
-const PHASE_COLOR = { normal: "#38bdf8", onset: "#fbbf24", sustained: "#ef4444" } as const;
 // Trajectory time-gradient: cool (early) → warm (late).
 const COOL: Vec3 = [56, 189, 248]; // #38bdf8
 const WARM: Vec3 = [239, 68, 68]; // #ef4444

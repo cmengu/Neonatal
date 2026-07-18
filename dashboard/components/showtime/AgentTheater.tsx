@@ -22,8 +22,9 @@
 import { useMemo } from "react";
 import { Trace, Tier3, Tier1 } from "@/lib/trace-types";
 import { usePlayhead } from "@/components/trace/playhead";
+import { TIER } from "@/lib/theme";
 
-const AMBER = "#fbbf24";
+const AMBER = TIER.t3;
 
 interface Specialist {
   key: string;

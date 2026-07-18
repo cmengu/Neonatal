@@ -4,9 +4,11 @@
  * the showtime rail had already drifted). Pure, presentational, no playhead access.
  */
 
+import { CONCERN } from "./theme";
+
 /** Clinical concern → its palette hex. GREEN < YELLOW < RED. */
 export function concernColor(level: string): string {
-  return level === "RED" ? "#ef4444" : level === "YELLOW" ? "#eab308" : "#22c55e";
+  return level === "RED" ? CONCERN.RED : level === "YELLOW" ? CONCERN.YELLOW : CONCERN.GREEN;
 }
 
 /** Compact numeric label: whole numbers ≥100, else one decimal. */
