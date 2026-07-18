@@ -19,7 +19,7 @@ clock as data-in, Tier 1, Tier 2 and Tier 3.
 "world_model": {
   "real": true,
   "infant": "infant7",
-  "window": [1240, 1419],          // absolute recorded-window span [w0, w1]
+  "window": [2740, 2919],          // absolute recorded-window span [w0, w1]
   "embed_dim": 48,
   "pca": {
     "fitted_on": "normal",          // axes fitted on the NORMAL PHASE only (spec §7)

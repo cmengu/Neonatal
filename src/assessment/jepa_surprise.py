@@ -9,7 +9,7 @@ scorecard in ``docs/research/world-model-jepa-result.md``) enters the cascade se
   the only quiet in the cascade stays Tier 2's *deterministic* CUSUM quiet);
 - ``soft_floor`` is always ``False`` — it is not a floor tier.
 
-Why observational: the scorecard's numbers (onset-anticipation AUC 0.758, held-out,
+Why observational: the scorecard's numbers (onset-anticipation AUC 0.772, held-out,
 label-free) make the signal *promising*, but they are a 10-infant result with no
 calibrated alarm operating point — exactly the situation where a learned model has
 earned a seat at the table (its Surprise rides in every Verdict's ``assessments`` for

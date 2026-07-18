@@ -36,7 +36,7 @@ def default_cascade(cusum_store=None, rag_graph=None, jepa=None) -> VerdictCasca
     is passed through to the RAG tier so tests can inject a fake graph (no Groq/Qdrant).
 
     **Why the world model ships observational, not voting.** Its onset-anticipation AUC of
-    0.758 is held-out and label-free, but it is a 10-infant result with no calibrated alarm
+    0.772 is held-out and label-free, but it is a 10-infant result with no calibrated alarm
     operating point — and the PICS stream carries no sepsis labels at all, so "departure from
     this infant's learned normal" is the only thing it has ever been scored on. That earns it a
     seat in every Verdict's ``assessments`` (the trace, the demo, and any future calibration
