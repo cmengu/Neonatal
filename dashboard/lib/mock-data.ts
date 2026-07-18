@@ -6,7 +6,7 @@ const minsAgo = (m: number): string =>
 /** 1 RED, 2 YELLOW, 7 GREEN = 10 patients */
 export const MOCK_ALERTS: NeonatalAlert[] = [
   {
-    patient_id: "infant1",
+    patient_id: "infant7",
     timestamp: minsAgo(3),
     concern_level: "RED",
     risk_score: 0.84,
@@ -144,7 +144,7 @@ export const MOCK_ALERTS: NeonatalAlert[] = [
     },
   },
   {
-    patient_id: "infant7",
+    patient_id: "infant1",
     timestamp: minsAgo(2),
     concern_level: "GREEN",
     risk_score: 0.09,
