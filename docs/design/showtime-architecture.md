@@ -83,6 +83,19 @@ Why novelty (not the 3-D position) drives the warp: the departure is diffuse acr
 dimensions, so the top-3 PCA position moves only ~0.5 cloud-widths, while the full-D Mahalanobis
 **novelty** rises to ~2× the calm cloud-edge. Details in `docs/design/trace-contract-world-model.md`.
 
+**World-model timing is independent of the fixture's phases.** The 3-D trajectory (real) follows
+infant7's actual embedding on `[1240,1419]` — its novelty peaks *early* (≈ window 47) and is
+non-monotonic — whereas the fixture's `normal/onset/sustained` boundaries (90 / 135) were authored
+for the synthesised tiers. So the 3-D and the tier phases are a real signal and a representative one
+sharing a clock, **not** one synchronised progression. The real world-model signal is shown
+faithfully (trajectory position + the novelty readout + the novelty-driven warp intensity); the
+now-marker's *colour* tracks the narrative phase purely as a visual aid. Aligning the two timelines
+is what recorder #31 does (it would emit real tiers on the same window).
+
+The displayed trajectory is a light ±2 moving average of the projected points — projection
+continuity only (spec §7 "interpolated smoothly"); the novelty/surprise numbers are the raw
+per-window values, untouched.
+
 ## Running it
 
 ```bash

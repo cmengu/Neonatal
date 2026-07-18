@@ -115,7 +115,22 @@ export function EmbeddingWarp({ wm }: { wm: WorldModel }) {
 
     const sx = (v: Vec3): Vec3 => [(v[0] / norm) * R, (v[1] / norm) * R, (v[2] / norm) * R];
     const worldCloud = cloud.map(sx);
-    const worldPath = path.map(sx);
+    const rawPath = path.map(sx);
+    // Smooth the *displayed* trajectory (±2 moving average) so the per-window embedding jitter
+    // reads as a coherent path leaving the cloud (spec §7 "interpolated smoothly"). The novelty /
+    // surprise numbers are untouched — this is projection continuity, not data smoothing.
+    const worldPath: Vec3[] = rawPath.map((_, i) => {
+      const lo = Math.max(0, i - 2);
+      const hi = Math.min(rawPath.length - 1, i + 2);
+      let x = 0, y = 0, z = 0;
+      for (let j = lo; j <= hi; j++) {
+        x += rawPath[j][0];
+        y += rawPath[j][1];
+        z += rawPath[j][2];
+      }
+      const c = hi - lo + 1;
+      return [x / c, y / c, z / c];
+    });
 
     const resize = () => {
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
