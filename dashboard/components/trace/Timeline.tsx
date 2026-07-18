@@ -9,7 +9,8 @@ import { usePlayhead } from "./playhead";
  * recorder-computed grid.phases.
  */
 export function Timeline() {
-  const { p, grid, setP, playing, togglePlay, setPlaying, clock, phase } = usePlayhead();
+  const { p, grid, setP, playing, togglePlay, setPlaying, clock, phase, demo, startDemo, stopDemo } =
+    usePlayhead();
   const trackRef = useRef<HTMLDivElement>(null);
   const scrubbing = useRef(false);
 
@@ -40,6 +41,7 @@ export function Timeline() {
 
   const jump = (range: [number, number] | null) => {
     if (!range) return;
+    stopDemo();
     setPlaying(false);
     setP(Math.round((range[0] + range[1]) / 2));
   };
@@ -52,6 +54,17 @@ export function Timeline() {
         className="w-9 h-9 rounded-full flex-none bg-sky-400 text-slate-950 text-[15px] font-bold flex items-center justify-center hover:brightness-110"
       >
         {playing ? "❚❚" : "▶"}
+      </button>
+      <button
+        onClick={() => (demo ? stopDemo() : startDemo())}
+        title="choreographed demo"
+        className={`h-9 flex-none rounded-full px-3.5 text-[11px] font-semibold uppercase tracking-wider flex items-center gap-1.5 transition-colors ${
+          demo
+            ? "bg-amber-400 text-slate-950 hover:brightness-110"
+            : "border border-amber-400/50 text-amber-300 hover:bg-amber-400/10"
+        }`}
+      >
+        {demo ? "◼ stop" : "✨ demo"}
       </button>
 
       <div className="flex-1">
@@ -71,6 +84,7 @@ export function Timeline() {
           className="relative h-[22px] rounded-md overflow-hidden cursor-pointer border border-slate-800"
           onPointerDown={(e) => {
             scrubbing.current = true;
+            stopDemo();
             setPlaying(false);
             e.currentTarget.setPointerCapture(e.pointerId);
             seek(e.clientX);

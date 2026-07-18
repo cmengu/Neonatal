@@ -35,6 +35,28 @@ function HeroStage({ trace }: { trace: Trace }) {
   );
 }
 
+/** Cinematic beat caption shown while demo-mode choreographs the run (#66). */
+function DemoBeatOverlay() {
+  const { beat, demo } = usePlayhead();
+  if (!beat) return null;
+  return (
+    <div className="pointer-events-none absolute bottom-6 left-1/2 z-20 w-[min(560px,80%)] -translate-x-1/2">
+      <div
+        className="glass animate-[noir-float-up_0.4s_ease-out] rounded-xl border border-white/[0.08] px-5 py-3 text-center"
+        style={{ boxShadow: "0 8px 40px rgba(0,0,0,0.5)" }}
+      >
+        <div className="flex items-center justify-center gap-2">
+          {demo && <span className="h-1.5 w-1.5 rounded-full bg-amber-400 motion-safe:animate-pulse" />}
+          <span className="text-[12px] font-semibold uppercase tracking-[0.2em] text-slate-100">
+            {beat.title}
+          </span>
+        </div>
+        <p className="mt-1 text-[11.5px] leading-relaxed text-slate-400">{beat.sub}</p>
+      </div>
+    </div>
+  );
+}
+
 function TopBar({ trace }: { trace: Trace }) {
   const { clock, phase } = usePlayhead();
   const v = trace.verdict;
@@ -68,7 +90,7 @@ export function ShowtimeShell({ trace }: { trace: Trace }) {
     <PlayheadProvider grid={trace.time_grid}>
       <div className="fixed inset-0 flex flex-col text-slate-100" style={{ background: "#070b12" }}>
         <TopBar trace={trace} />
-        <div className="flex min-h-0 flex-1">
+        <div className="relative flex min-h-0 flex-1">
           <aside className="w-[384px] shrink-0 space-y-3.5 overflow-y-auto border-r border-white/[0.06] p-3.5">
             <DataInPanel trace={trace} />
             <Tier1Panel trace={trace} />
@@ -78,6 +100,7 @@ export function ShowtimeShell({ trace }: { trace: Trace }) {
           <aside className="w-[380px] shrink-0 overflow-y-auto border-l border-white/[0.06] p-3.5">
             <AgentTheater trace={trace} />
           </aside>
+          <DemoBeatOverlay />
         </div>
         <Timeline />
       </div>
