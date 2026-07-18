@@ -1,56 +1,23 @@
 "use client";
 
-import { ReactNode } from "react";
 import { Trace } from "@/lib/trace-types";
 import { PlayheadProvider, usePlayhead } from "@/components/trace/playhead";
 import { Timeline } from "@/components/trace/Timeline";
 import { EmbeddingWarp } from "@/components/showtime/EmbeddingWarp";
 import { DataInPanel, Tier1Panel, Tier2Panel } from "@/components/showtime/TierPanels";
+import { AgentTheater } from "@/components/showtime/AgentTheater";
 
 /**
  * ShowtimeShell — the immersive stage (#61).
  *
  * One `PlayheadProvider` owns the shared clock; every panel reads it via `usePlayhead()`
  * so the whole page scrubs together. Layout is the spec's hero + HUD: elevated tier rail
- * (left, #63), the real 3-D world-model hero (center, #62), the agent theater (right),
- * and the shared timeline scrubber (bottom). The agent theater gets its cinematic
- * treatment in #64.
+ * (left, #63), the real 3-D world-model hero (center, #62), the agent-reasoning theater
+ * (right, #64), and the shared timeline scrubber (bottom).
  */
-
-const TIER = { t3: "#fbbf24" } as const;
 
 function concernColor(level: string): string {
   return level === "RED" ? "#ef4444" : level === "YELLOW" ? "#eab308" : "#22c55e";
-}
-
-function PanelFrame({
-  accent,
-  label,
-  tag,
-  children,
-}: {
-  accent: string;
-  label: string;
-  tag?: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="glass rounded-xl border border-white/[0.06] p-3.5">
-      <div className="mb-2.5 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span
-            className="h-1.5 w-1.5 rounded-full"
-            style={{ background: accent, boxShadow: `0 0 8px ${accent}` }}
-          />
-          <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-300">
-            {label}
-          </span>
-        </div>
-        {tag && <span className="text-[9px] uppercase tracking-wider text-slate-600">{tag}</span>}
-      </div>
-      {children}
-    </div>
-  );
 }
 
 function HeroStage({ trace }: { trace: Trace }) {
@@ -65,52 +32,6 @@ function HeroStage({ trace }: { trace: Trace }) {
         no world_model block on this trace · export via scripts/export_jepa_trace.py (#60)
       </div>
     </div>
-  );
-}
-
-function Tier3Panel({ trace }: { trace: Trace }) {
-  const t3 = trace.tier3;
-  if (!t3.ran) {
-    return (
-      <PanelFrame accent={TIER.t3} label="Tier 3 · Agents" tag="skipped">
-        <div className="text-[11px] text-slate-500">Skipped on a calm window.</div>
-      </PanelFrame>
-    );
-  }
-  return (
-    <PanelFrame accent={TIER.t3} label="Tier 3 · Agent reasoning" tag="#64 animates">
-      <div className="space-y-3">
-        <div>
-          <div className="mb-1 text-[9px] uppercase tracking-wider text-slate-600">
-            Retrieved guidelines
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {t3.retrieved.map((r) => (
-              <span
-                key={r.id}
-                className="rounded border px-1.5 py-0.5 font-mono text-[9.5px]"
-                style={{ borderColor: `${TIER.t3}44`, color: TIER.t3 }}
-              >
-                {r.source}
-              </span>
-            ))}
-          </div>
-        </div>
-        <div>
-          <div className="mb-1 text-[9px] uppercase tracking-wider text-slate-600">Reasoning</div>
-          <p className="text-[11.5px] leading-relaxed text-slate-300">{t3.reasoning}</p>
-        </div>
-        <div className="flex items-center gap-2 text-[10px]">
-          <span
-            className="rounded px-1.5 py-0.5"
-            style={{ background: "#ffffff08", color: t3.self_check.passed ? "#6ee7b7" : "#fcd34d" }}
-          >
-            self-check {t3.self_check.passed ? "✓ passed" : "⚠"}
-          </span>
-          <span className="text-slate-500">escalate-only</span>
-        </div>
-      </div>
-    </PanelFrame>
   );
 }
 
@@ -155,7 +76,7 @@ export function ShowtimeShell({ trace }: { trace: Trace }) {
           </aside>
           <HeroStage trace={trace} />
           <aside className="w-[380px] shrink-0 overflow-y-auto border-l border-white/[0.06] p-3.5">
-            <Tier3Panel trace={trace} />
+            <AgentTheater trace={trace} />
           </aside>
         </div>
         <Timeline />
