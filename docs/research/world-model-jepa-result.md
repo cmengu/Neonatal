@@ -135,9 +135,16 @@ surprise; the demo needs both signals, so **h16_m50 wins decisively.**
 
 - **Fix #18 at the source** (rebuild RR from raw `.qrsc`, per-infant `fs`, apply `trim_offsets`)
   → unblocks a *real* supervised bradycardia-anticipation AUC to sit beside these numbers.
-- **Richer features (method #3):** fold in respiration / apnea–bradycardia coupling and the
-  HeRO `sampen`/`sample_asymmetry` signature — more separable physiology in, more separable
-  states out.
+- **Richer features (method #3) — BLOCKED in-repo (verified 2026-07-18).** Folding in the
+  respiration / apnea–bradycardia stream is the right idea, but it **cannot be done honestly on
+  the committed data**: `all_patients_resp_features.csv` uses a *different, coarser window grid*
+  than `all_patients_windowed.csv` (infant7: 2 439 resp windows vs 7 217 HRV windows), and
+  `window_idx` is **not a shared coordinate** — a naive `(record_name, window_idx)` join is 64 %
+  NaN and the 36 % that "match" are index coincidences, not time-aligned. An honest join needs
+  per-window timestamps to map the two grids by time; the HRV windowed file carries only
+  `window_idx`, so the mapping isn't recoverable here. Unblock by re-emitting both feature streams
+  on one shared time grid (same windowing metadata #18's rebuild would produce). Until then,
+  do **not** force the misaligned join — it would fabricate a feature relationship.
 - **More patients.** Everything here is a 10-infant result; the honest pitch line is
   *"separates departure from baseline at held-out AUC ≈ 0.7–0.76; next we scale the cohort."*
 
