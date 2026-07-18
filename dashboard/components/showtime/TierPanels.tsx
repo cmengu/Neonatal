@@ -15,19 +15,9 @@ import { ReactNode } from "react";
 import { DataChannel, Tier1, Tier1Feature, Tier2 } from "@/lib/trace-types";
 import { TraceChart, ChartSeries } from "@/components/trace/TraceChart";
 import { usePlayhead } from "@/components/trace/playhead";
+import { concernColor, fmt, valueAt } from "@/lib/trace-format";
 
 const TIER = { t1: "#38bdf8", t2: "#a78bfa" } as const;
-
-function concernColor(level: string): string {
-  return level === "RED" ? "#ef4444" : level === "YELLOW" ? "#eab308" : "#22c55e";
-}
-function fmt(v: number): string {
-  return String(Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 10) / 10);
-}
-function valueAt(points: number[], p: number): number {
-  const i = Math.max(0, Math.min(points.length - 1, Math.round(p)));
-  return points[i] ?? 0;
-}
 
 function NoirCard({
   accent,

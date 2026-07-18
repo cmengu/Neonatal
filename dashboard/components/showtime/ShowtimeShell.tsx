@@ -6,6 +6,7 @@ import { Timeline } from "@/components/trace/Timeline";
 import { EmbeddingWarp } from "@/components/showtime/EmbeddingWarp";
 import { DataInPanel, Tier1Panel, Tier2Panel } from "@/components/showtime/TierPanels";
 import { AgentTheater } from "@/components/showtime/AgentTheater";
+import { concernColor } from "@/lib/trace-format";
 
 /**
  * ShowtimeShell — the immersive stage (#61).
@@ -15,10 +16,6 @@ import { AgentTheater } from "@/components/showtime/AgentTheater";
  * (left, #63), the real 3-D world-model hero (center, #62), the agent-reasoning theater
  * (right, #64), and the shared timeline scrubber (bottom).
  */
-
-function concernColor(level: string): string {
-  return level === "RED" ? "#ef4444" : level === "YELLOW" ? "#eab308" : "#22c55e";
-}
 
 function HeroStage({ trace }: { trace: Trace }) {
   // #62: the real 3-D embedding warp, driven by the #60 world_model block. Falls back to a

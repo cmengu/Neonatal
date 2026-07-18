@@ -323,7 +323,8 @@ export function EmbeddingWarp({ wm }: { wm: WorldModel }) {
     o.auto = false;
     o.lastX = e.clientX;
     o.lastY = e.clientY;
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    e.currentTarget.setPointerCapture(e.pointerId);
+    (e.currentTarget as HTMLElement).style.cursor = "grabbing";
   };
   const onMove = (e: React.PointerEvent) => {
     const o = orbit.current;
@@ -353,7 +354,8 @@ export function EmbeddingWarp({ wm }: { wm: WorldModel }) {
   };
   const onUp = (e: React.PointerEvent) => {
     orbit.current.dragging = false;
-    (e.target as HTMLElement).releasePointerCapture?.(e.pointerId);
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
+    (e.currentTarget as HTMLElement).style.cursor = "grab";
   };
 
   const outside = noveltyNow > cloudEdge;
@@ -365,8 +367,7 @@ export function EmbeddingWarp({ wm }: { wm: WorldModel }) {
 
       <canvas
         ref={canvasRef}
-        className="absolute inset-0 h-full w-full touch-none"
-        style={{ cursor: orbit.current.dragging ? "grabbing" : "grab" }}
+        className="absolute inset-0 h-full w-full cursor-grab touch-none"
         onPointerDown={onDown}
         onPointerMove={onMove}
         onPointerUp={onUp}
