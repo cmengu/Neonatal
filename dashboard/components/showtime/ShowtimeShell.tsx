@@ -4,6 +4,7 @@ import { ReactNode, useMemo } from "react";
 import { Trace } from "@/lib/trace-types";
 import { PlayheadProvider, usePlayhead } from "@/components/trace/playhead";
 import { Timeline } from "@/components/trace/Timeline";
+import { EmbeddingWarp } from "@/components/showtime/EmbeddingWarp";
 
 /**
  * ShowtimeShell — the immersive stage (#61).
@@ -185,69 +186,15 @@ function Tier2Panel({ trace }: { trace: Trace }) {
 }
 
 function HeroStage({ trace }: { trace: Trace }) {
-  const { phase } = usePlayhead();
-  const idx = useIdx();
-  // Stand-in "surprise" until the real JEPA series lands (#60): normalise the
-  // CUSUM accumulation. Labelled a surrogate on screen so nothing is misread.
-  const surrogate = Math.min(1.4, (trace.tier2.c_plus_series[idx] ?? 0) / (trace.tier2.h || 1));
-  const phaseColor =
-    phase === "sustained" ? "#ef4444" : phase === "onset" ? "#fbbf24" : TIER.t1;
-  const glow = 16 + surrogate * 46;
-
+  // #62: the real 3-D embedding warp, driven by the #60 world_model block. Falls back to a
+  // labelled placeholder only if a trace predates #60 (world_model is optional on the contract).
+  if (trace.world_model) return <EmbeddingWarp wm={trace.world_model} />;
   return (
-    <div className="relative flex-1 overflow-hidden">
+    <div className="relative flex flex-1 items-center justify-center overflow-hidden">
       <div className="absolute inset-0 noir-grid opacity-40" />
       <div className="absolute inset-0 noir-vignette" />
-
-      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-        <div className="relative" style={{ width: 540, height: 440 }}>
-          {/* the learned-normal cloud */}
-          <div
-            className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full"
-            style={{
-              width: 156,
-              height: 116,
-              border: `1px dashed ${TIER.t1}55`,
-              boxShadow: `0 0 60px ${TIER.t1}1f, inset 0 0 40px ${TIER.t1}12`,
-            }}
-          />
-          <div
-            className="absolute left-1/2 top-1/2 font-mono text-[9px] text-slate-500"
-            style={{ transform: "translate(-96px, 66px)" }}
-          >
-            learned normal
-          </div>
-          {/* the "now" marker — drifts out of the cloud as the surrogate rises */}
-          <div
-            className="absolute rounded-full transition-all duration-300 ease-out"
-            style={{
-              left: `calc(50% + ${surrogate * 156}px)`,
-              top: `calc(50% - ${surrogate * 96}px)`,
-              width: 22,
-              height: 22,
-              transform: "translate(-50%, -50%)",
-              background: phaseColor,
-              boxShadow: `0 0 ${glow}px ${phaseColor}, 0 0 ${glow * 2}px ${phaseColor}88`,
-            }}
-          />
-        </div>
-      </div>
-
-      <div className="absolute left-1/2 top-5 -translate-x-1/2 text-center">
-        <div className="text-[11px] uppercase tracking-[0.3em] text-slate-500">
-          World model · latent embedding
-        </div>
-      </div>
-      <div className="absolute right-6 top-5 text-right font-mono text-[11px]">
-        <div className="text-slate-500">surprise (surrogate)</div>
-        <div className="text-lg" style={{ color: phaseColor }}>
-          {surrogate.toFixed(2)}
-        </div>
-      </div>
-      <div className="absolute bottom-5 left-1/2 -translate-x-1/2 text-center">
-        <div className="font-mono text-[10px] text-slate-600">
-          3-D warp mounts here · #62 (react-three-fiber) · real JEPA embedding via #60
-        </div>
+      <div className="font-mono text-[11px] text-slate-600">
+        no world_model block on this trace · export via scripts/export_jepa_trace.py (#60)
       </div>
     </div>
   );
