@@ -92,6 +92,11 @@ class JepaSurpriseAssessor:
     """
 
     source = "jepa_surprise"
+    #: Renounces the vote (``Observational``): the cascade keeps this tier's Assessment in the
+    #: trace but excludes it from the floor, the level, ``escalated_by`` and the headline. The
+    #: GREEN / ``may_quiet=False`` discipline below keeps it out of the *level*; this keeps it
+    #: out of the *rationale* a clinician reads, which the level alone does not.
+    observational = True
 
     def __init__(
         self,

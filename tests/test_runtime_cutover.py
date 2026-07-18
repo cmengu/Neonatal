@@ -114,3 +114,66 @@ def test_view_from_state_falls_back_to_load_when_no_context(monkeypatch):
     )
     assert rt.view_from_state({"patient_id": "infant1"}) == "LOADED_VIEW"
     assert seen["pid"] == "infant1"
+
+
+# --- #59: the observational world-model tier joins the production cascade ---------
+
+
+def test_default_cascade_carries_the_jepa_observation_in_the_trace():
+    """The world model is *in* the production path — as a watcher, on every window.
+
+    Before this, ``default_cascade`` composed only deviation + CUSUM + RAG, so the trained
+    JEPA existed solely in the demo export: nothing a clinician or an audit ever saw ran it.
+    """
+    cascade = default_cascade(cusum_store=InMemoryCusumStore(), rag_graph=_FakeGraph())
+    verdict = cascade.assess(AssessmentContext(patient_id="calm", z_scores={"sdnn": 0.1}))
+    assert "jepa_surprise" in [a.source for a in verdict.assessments]
+
+
+def test_default_cascade_verdict_is_identical_with_and_without_the_watcher():
+    """Wiring an observational tier into production must be a no-op on the verdict itself."""
+    common = dict(cusum_store=InMemoryCusumStore(), rag_graph=_FakeGraph())
+    ctx = AssessmentContext(patient_id="calm", z_scores={"sdnn": 0.1})
+    with_obs = default_cascade(**common).assess(ctx)
+    # ``jepa=False``-equivalent: a cascade whose loader yielded nothing.
+    without = default_cascade(cusum_store=InMemoryCusumStore(), rag_graph=_FakeGraph(),
+                              jepa=_NoTier()).assess(ctx)
+    assert with_obs.model_dump(exclude={"assessments"}) == without.model_dump(exclude={"assessments"})
+
+
+class _NoTier:
+    """Sentinel-free stand-in: an observational tier that contributes an inert observation."""
+
+    source = "jepa_surprise_absent"
+    observational = True
+
+    def assess(self, context):
+        from src.assessment.types import Assessment, ConcernLevel as _CL
+        return Assessment(level=_CL.GREEN, risk=0.0, confidence=0.0,
+                          rationale="inert", source=self.source)
+
+
+def test_unusable_checkpoint_omits_the_watcher_instead_of_failing_the_assessment(monkeypatch):
+    """A watcher that cannot load must never take the safety-critical path down with it.
+
+    The tier contributes nothing to the verdict by construction, so a missing or corrupt
+    checkpoint is strictly less bad than a cascade that refuses to assess a patient.
+    """
+    import src.assessment.runtime as runtime
+
+    def _boom(*a, **kw):
+        raise FileNotFoundError("models/jepa/jepa.pt missing")
+
+    monkeypatch.setattr(runtime, "JepaSurpriseAssessor", _boom)
+    cascade = default_cascade(cusum_store=InMemoryCusumStore(), rag_graph=_FakeGraph())
+    verdict = cascade.assess(AssessmentContext(patient_id="calm", z_scores={"sdnn": 0.1}))
+    assert verdict.level == ConcernLevel.GREEN
+    assert "jepa_surprise" not in [a.source for a in verdict.assessments]
+
+
+def test_watcher_does_not_disturb_the_rag_short_circuit():
+    """The GREEN short-circuit must still skip the LLM with the watcher composed in."""
+    fg = _FakeGraph("RED")
+    cascade = default_cascade(cusum_store=InMemoryCusumStore(), rag_graph=fg)
+    cascade.assess(AssessmentContext(patient_id="calm", z_scores={"sdnn": 0.1}))
+    assert fg.calls == 0

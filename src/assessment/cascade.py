@@ -39,7 +39,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from src.assessment.assessor import Assessor, SoftFloorArbiter
+from src.assessment.assessor import Assessor, Observational, SoftFloorArbiter
 from src.assessment.types import Assessment, AssessmentContext, ConcernLevel, Verdict, most_severe
 
 RAG_SOURCE = "rag"
@@ -82,6 +82,17 @@ class VerdictCascade:
         """
         return isinstance(tier, SoftFloorArbiter) and tier.quiets_soft_floor
 
+    @staticmethod
+    def _is_observational(tier: Assessor) -> bool:
+        """Whether ``tier`` watches without voting (#59) — see ``Observational``.
+
+        Structural, like the soft-floor capability: read from a class-level attribute, so a
+        tier that renounces the vote is excluded from the floor, the level, ``escalated_by``
+        *and* the headline regardless of what its Assessment claims. Its Assessment still
+        rides in ``Verdict.assessments`` for the trace.
+        """
+        return isinstance(tier, Observational) and tier.observational
+
     def assess(self, context: AssessmentContext) -> Verdict:
         # Always-run tiers (Tier 1 + Tier 2). The rag tier is deferred so it can be
         # skipped on a clean window without paying for the LLM.
@@ -96,8 +107,16 @@ class VerdictCascade:
         ]
         assessments: list[Assessment] = [a for _t, a in base_results]
 
+        # Observational tiers (#59) watch but never vote: their Assessment stays in
+        # ``assessments`` (the trace / demo / future calibration study see every window) but is
+        # excluded from *every* verdict computation below — floor, level, escalation, headline.
+        # Splitting here, structurally, is what makes "observational" mean observational: the
+        # headline is picked by (level, risk), so a GREEN-but-high-risk watcher would otherwise
+        # capture the Verdict's risk, confidence and rationale without ever touching its level.
+        voting: list[Assessment] = [a for t, a in base_results if not self._is_observational(t)]
+
         # --- Two-level Safety Floor (ADR-0003 / #14) ---
-        floor_assessments = [a for a in assessments if a.source == self._floor_source]
+        floor_assessments = [a for a in voting if a.source == self._floor_source]
         # HARD floor: everything the deviation tier raises that is *not* a quietable SOFT
         # floor (RED / ≥2 concordant). Un-lowerable — the FNR=0 guarantee.
         hard_floor = most_severe(*[a.level for a in floor_assessments if not a.soft_floor])
@@ -109,7 +128,9 @@ class VerdictCascade:
         # a tier that STRUCTURALLY holds quieting authority (a ``SoftFloorArbiter``) is trusted to
         # grant it. A rogue tier that sets ``may_quiet`` without the capability is ignored (#27).
         gated_quiet = any(
-            a.may_quiet for tier, a in base_results if self._can_quiet_soft_floor(tier)
+            a.may_quiet
+            for tier, a in base_results
+            if self._can_quiet_soft_floor(tier) and not self._is_observational(tier)
         )
         soft_contribution = (
             ConcernLevel.GREEN if gated_quiet else soft_floor_level
@@ -118,14 +139,16 @@ class VerdictCascade:
 
         # Non-floor tiers (temporal Drift, and rag after the short-circuit) may escalate
         # *above* the effective floor; the deviation tier speaks only through the floor.
-        non_floor = [a for a in assessments if a.source != self._floor_source]
+        non_floor = [a for a in voting if a.source != self._floor_source]
         base_level = most_severe(effective_floor, *[a.level for a in non_floor])
 
         # Tier 3 short-circuit: skip the LLM entirely when the merged calm case is GREEN.
+        # ``base_level`` excludes observational tiers, so a watcher can never provoke LLM spend.
         if rag_tiers and base_level > ConcernLevel.GREEN:
             rag_assessments = [t.assess(context) for t in rag_tiers]
             assessments += rag_assessments
             non_floor += rag_assessments
+            voting += rag_assessments
 
         # Escalate-only: any escalating tier can raise above the floor but never lower it
         # (``most_severe``); the effective floor is the un-lowerable minimum. A quieted SOFT
@@ -134,8 +157,12 @@ class VerdictCascade:
         level = most_severe(effective_floor, *[a.level for a in non_floor])
         escalated_by = [a.source for a in non_floor if a.level > effective_floor]
 
-        # Headline (risk / rationale / confidence) comes from the most severe assessment.
-        headline = max(assessments, key=lambda a: (a.level, a.risk))
+        # Headline (risk / rationale / confidence) comes from the most severe *voting*
+        # assessment. Observational tiers are excluded: they are GREEN by construction, so on a
+        # calm window they would tie every other tier on level and win on risk alone — handing a
+        # watcher the clinician-facing rationale. ``or assessments`` keeps a degenerate
+        # all-observational cascade from raising on an empty ``max``.
+        headline = max(voting or assessments, key=lambda a: (a.level, a.risk))
 
         return Verdict(
             patient_id=context.patient_id,
