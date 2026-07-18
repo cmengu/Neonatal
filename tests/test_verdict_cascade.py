@@ -43,7 +43,7 @@ class FakeAssessor:
 
 
 def _ctx() -> AssessmentContext:
-    return AssessmentContext(patient_id="t", z_scores={"rmssd": -2.0}, hrv_values={}, detected_events=0)
+    return AssessmentContext(patient_id="t", z_scores={"rmssd": -2.0}, hrv_values={})
 
 
 def test_single_tier_verdict_equals_that_tier():

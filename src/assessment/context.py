@@ -45,7 +45,7 @@ def load_context(patient_id: str) -> AssessmentContext:
         col: float(latest_feat[col]) for col in HRV_FEATURE_COLS if col in feat_df.columns
     }
 
-    detected_events = (
+    n_events = (
         int((feat_df["mean_rr"] > _BRADY_RR_MS).sum()) if "mean_rr" in feat_df.columns else 0
     )
 
@@ -53,7 +53,7 @@ def load_context(patient_id: str) -> AssessmentContext:
         patient_id=patient_id,
         z_scores=z_scores,
         hrv_values=hrv_values,
-        detected_events=detected_events,
+        n_events=n_events,
     )
 
 

@@ -14,7 +14,7 @@ from src.assessment.types import AssessmentContext, ConcernLevel
 
 
 def _ctx(z: dict[str, float]) -> AssessmentContext:
-    return AssessmentContext(patient_id="t", z_scores=z, hrv_values={}, detected_events=0)
+    return AssessmentContext(patient_id="t", z_scores=z, hrv_values={})
 
 
 # --- floor behaviour that survives the #8 change -------------------------------

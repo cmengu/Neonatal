@@ -8,9 +8,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from src.agent.state import AssessmentView
 from src.assessment.cusum import InMemoryCusumStore
-from src.assessment.runtime import build_view, default_cascade
+from src.assessment.runtime import default_cascade, viewed
 from src.assessment.types import AssessmentContext, ConcernLevel
 
 
@@ -36,13 +35,17 @@ class _FakeGraph:
         }
 
 
-def test_build_view_is_deterministic_tier1_and_carries_no_risk_score():
+def test_viewed_is_deterministic_tier1_and_carries_no_risk_score():
+    # #28: the Tier-3 read is the *same* AssessmentContext carrier, enriched in place —
+    # not a second AssessmentView type. viewed() fills the deterministic Tier-1 level/risk.
     ctx = AssessmentContext(patient_id="p", z_scores={"sdnn": -3.0, "rmssd": -3.0})
-    view = build_view(ctx)
-    assert isinstance(view, AssessmentView)
+    view = viewed(ctx)
+    assert isinstance(view, AssessmentContext)
     assert view.level == "RED"  # two concordant pathological features → HARD floor
     assert 0.0 <= view.risk <= 1.0
     assert not hasattr(view, "risk_score")  # the ONNX field is gone
+    # The input is left untouched — enrichment returns a copy.
+    assert ctx.level is None
 
 
 def test_cascade_green_base_short_circuits_rag():
@@ -106,7 +109,7 @@ def test_view_from_state_falls_back_to_load_when_no_context(monkeypatch):
 
     seen = {}
     monkeypatch.setattr(
-        rt, "build_view_for_patient",
+        rt, "viewed_for_patient",
         lambda pid: seen.__setitem__("pid", pid) or "LOADED_VIEW",
     )
     assert rt.view_from_state({"patient_id": "infant1"}) == "LOADED_VIEW"
