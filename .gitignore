@@ -10,6 +10,12 @@ __pycache__/
 venv/
 env/
 
+# Secrets — .env holds real API keys and must never be committed.
+# NOTE: `env/` above matches a *directory*; it does NOT match the file `.env`.
+.env
+.env.*
+!.env.example
+
 # Jupyter
 .ipynb_checkpoints/
 
