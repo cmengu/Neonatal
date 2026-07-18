@@ -133,6 +133,43 @@ export interface TraceVerdict {
   rationale: string;
 }
 
+/**
+ * §7 — the JEPA world-model trajectory (#60). REAL target-encoder embeddings for the
+ * recorded window, on the shared time grid, produced by `scripts/export_jepa_trace.py`
+ * from the trained checkpoint (never hand-authored). Optional: recorder traces predating
+ * #60 omit it; the demo's 3-D embedding hero (#62) requires it.
+ *
+ * Honesty (Ledger H1 / spec §7): `pca.fitted_on: "normal"` — the 3-D axes are fitted on the
+ * *normal phase only*, not the departure. The 3-D position drift is modest (`pca_visible_sep`,
+ * the departure is diffuse across embedding dims); the **novelty** (full-D Mahalanobis, unit =
+ * calm-SD) is what leaves the cloud and should drive the warp magnitude. No accuracy number.
+ */
+export interface WorldModelPoint {
+  idx: number; // shared-grid window index [0, n)
+  pca3: [number, number, number]; // embedding projected onto the 3 normal-phase PCs
+  novelty: number; // Mahalanobis distance from the learned-normal cloud
+  surprise: number; // horizon-aggregated prediction error, z-scored to calm
+}
+
+export interface WorldModel {
+  real: boolean;
+  infant: string;
+  window: [number, number]; // absolute recorded-window span [w0, w1]
+  embed_dim: number;
+  pca: {
+    fitted_on: "normal";
+    variance_explained: [number, number, number];
+    axis_labels: [string, string, string];
+  };
+  trajectory: WorldModelPoint[]; // length n — one point per grid window
+  normal_cloud: [number, number, number][]; // calm embeddings in the PCA basis (the cluster)
+  novelty_baseline_p95: number; // calm-cloud edge (95th pct) — the warp's "normal" radius
+  surprise: { series: number[]; calm_mean: number; calm_std: number };
+  sep_rise_calm_sd: number; // novelty rise across the window, in calm-SD (honest headline)
+  pca_visible_sep: number; // 3-D drift in cloud-spread units (how much the eye sees in 3-D)
+  caption: string; // exactly what the axes are — painted on the panel
+}
+
 /** Top-level trace.json. */
 export interface Trace {
   schema_version: string;
@@ -145,4 +182,5 @@ export interface Trace {
   tier2: Tier2;
   tier3: Tier3;
   verdict: TraceVerdict;
+  world_model?: WorldModel; // §7 (#60) — additive; absent on pre-#60 recorder traces
 }
