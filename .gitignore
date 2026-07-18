@@ -28,3 +28,6 @@ qdrant_local/.lock
 
 # JEPA sweep intermediate checkpoints (winner promoted to models/jepa/jepa.pt)
 models/jepa/sweep/*.pt
+
+# Playwright raw capture scratch (final video lives at docs/demo/showtime-demo.*)
+docs/demo/.raw/
