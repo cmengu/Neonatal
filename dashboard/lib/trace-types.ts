@@ -157,7 +157,11 @@ export interface WorldModel {
   window: [number, number]; // absolute recorded-window span [w0, w1]
   embed_dim: number;
   pca: {
-    fitted_on: "normal";
+    // "normal" = this window's own pre-onset phase (the spec §7 default). "calm_cloud" =
+    // the infant's whole calm baseline, used when the window opens too briefly calm to
+    // define three axes — still label-free, still never fitted on the departure. The
+    // caption states which was used.
+    fitted_on: "normal" | "calm_cloud";
     basis: "raw" | "whitened"; // "raw" ships; see export_jepa_trace.py for why whitening lost
     variance_explained: [number, number, number];
     // Median share of the window's distance-from-normal that these 3 axes actually carry.

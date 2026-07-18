@@ -59,15 +59,53 @@ DEFAULT_NORMAL_LEN = 90
 CLOUD_SAMPLE = 400
 
 
-def _pca_fit(embeddings: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+# Fewest points that may define the 3-D basis. Below this the top-3 SVD is rank-deficient or
+# wildly unstable, so the basis is fitted on the infant's whole calm cloud instead (still
+# label-free, still never the departure). Chosen as a floor on "enough windows to have a
+# direction at all", not a statistical guarantee — 3 axes in 48 dims is under-determined either
+# way, which is what ``novelty_captured`` reports.
+MIN_BASIS_POINTS = 24
+
+
+def _complete_basis(comps: np.ndarray, var: np.ndarray, dim: int, n: int = 3):
+    """Pad a rank-deficient basis out to ``n`` orthonormal rows, with 0.0 variance.
+
+    A window that opens with 2 calm samples yields a rank-1 SVD, so ``vt[:3]`` returns a
+    (2, D) array — and every downstream ``pca3`` silently becomes 2-D, which the trace
+    contract declares as a 3-tuple and the 3-D hero reads as ``undefined`` on the z axis.
+    Padding with genuinely orthogonal directions carrying an honest 0.0 keeps the shape
+    contract while making the emptiness visible rather than hiding it.
+    """
+    extra: list[np.ndarray] = []
+    for e in np.eye(dim):
+        v = e - comps.T @ (comps @ e) if len(comps) else e.copy()
+        for u in extra:
+            v = v - u * float(u @ v)
+        norm = float(np.linalg.norm(v))
+        if norm > 1e-6:
+            extra.append(v / norm)
+        if len(comps) + len(extra) >= n:
+            break
+    comps = np.vstack([comps, np.array(extra)])[:n] if extra else comps[:n]
+    var = np.concatenate([var, np.zeros(n - len(var))])[:n]
+    return comps, var
+
+
+def _pca_fit(embeddings: np.ndarray, n_components: int = 3):
     """Top-3 PCA basis of ``embeddings`` (N, D). Returns (mean (D,), components (3, D),
-    variance_explained (3,)). Fitted on whatever slice is passed — here, the normal phase."""
+    variance_explained (3,)). Fitted on whatever slice is passed — here, the normal phase.
+
+    Always returns exactly ``n_components`` orthonormal rows: see ``_complete_basis``.
+    """
     mu = embeddings.mean(axis=0)
     centered = embeddings - mu
     # SVD is the numerically stable PCA; right-singular vectors are the principal axes.
     _, s, vt = np.linalg.svd(centered, full_matrices=False)
     total_var = float(np.sum(s**2)) or 1.0
-    return mu, vt[:3], (s[:3] ** 2) / total_var
+    comps, var = vt[:n_components], (s[:n_components] ** 2) / total_var
+    if comps.shape[0] < n_components:
+        comps, var = _complete_basis(comps, var, embeddings.shape[1], n_components)
+    return mu, comps, var
 
 
 def _project(embeddings: np.ndarray, mu: np.ndarray, comps: np.ndarray) -> np.ndarray:
@@ -100,6 +138,34 @@ def _captured_fraction(centered: np.ndarray, comps: np.ndarray) -> float:
     full = np.linalg.norm(centered, axis=1)
     shown = np.linalg.norm(centered @ comps.T, axis=1)
     return float(np.median(shown / np.maximum(full, 1e-12)))
+
+
+def _caption(fitted_on: str, basis: str, captured: float) -> str:
+    """The text painted on the panel — every caveat the picture needs, in one place.
+
+    Assembled rather than interpolated inline because each clause is conditional and the
+    disclosures (what the axes can show, that the window is selected) must survive *every*
+    branch: a caption that silently drops them on one code path is worse than none.
+    """
+    where = (
+        "this infant's normal phase only"
+        if fitted_on == "normal"
+        else "this infant's whole calm baseline (this window opens too briefly calm to define axes)"
+    )
+    whitened = (
+        " and whitened by the calm covariance, so on-screen distance from the cloud is the "
+        "Mahalanobis novelty the model actually reports"
+        if basis == "whitened"
+        else ""
+    )
+    return (
+        f"Principal components of the JEPA target-encoder embedding, fitted on {where}{whitened}. "
+        f"These 3 axes carry {captured * 100:.0f}% of the departure; the rest moves in directions "
+        "the screen cannot show. The trajectory's distance from the learned-normal cloud and its "
+        "predictive surprise are real model outputs; the axes carry no accuracy score. This is a "
+        "selected example window, not a typical one — the model's actual claim is the pooled "
+        "onset-anticipation AUC across the whole cohort."
+    )
 
 
 def export_world_model(
@@ -176,7 +242,15 @@ def export_world_model(
         Zb = Z
         cloud_src_all = calm_embeddings
     normal_embeddings = np.array([Zb[zpos[t]] for t in normal_abs])
-    mu, comps, var_explained = _pca_fit(normal_embeddings)
+    # A recorded window need not open calm — the recorder's own window [113,292] opens with a
+    # 2-window normal phase, which cannot define three axes. Fall back to the infant's whole
+    # calm cloud: still fitted with no label and never on the departure, just on a bigger
+    # sample of "this infant's normal" than this particular window happens to contain.
+    if len(normal_embeddings) >= MIN_BASIS_POINTS:
+        basis_src, fitted_on = normal_embeddings, "normal"
+    else:
+        basis_src, fitted_on = cloud_src_all, "calm_cloud"
+    mu, comps, var_explained = _pca_fit(basis_src)
     # How much of the departure the screen can actually show (see _captured_fraction).
     demo_centered = np.array([Zb[zpos[w0 + i]] for i in range(n)]) - mu
     captured = _captured_fraction(demo_centered, comps)
@@ -241,7 +315,7 @@ def export_world_model(
         "window": [w0, w1],
         "embed_dim": int(model.cfg.embed_dim),
         "pca": {
-            "fitted_on": "normal",
+            "fitted_on": fitted_on,
             "basis": basis,
             "variance_explained": [round(float(v), 4) for v in var_explained],
             # The honest number for the *picture*: the median share of each window's
@@ -260,17 +334,7 @@ def export_world_model(
         },
         "sep_rise_calm_sd": round(sep_rise_calm_sd, 3),
         "pca_visible_sep": round(pca_sep, 3),
-        "caption": (
-            "Principal components of the JEPA target-encoder embedding, fitted on this infant's "
-            "normal phase only"
-            + (" and whitened by the calm covariance, so on-screen distance from the cloud is the "
-               "Mahalanobis novelty the model actually reports" if basis == "whitened" else "")
-            + f". These 3 axes carry {captured * 100:.0f}% of the departure; the rest moves in "
-            "directions the screen cannot show. The trajectory's distance from the learned-normal "
-            "cloud and its predictive surprise are real model outputs; the axes carry no accuracy "
-            "score. This is a selected example window, not a typical one — the model's actual "
-            "claim is the pooled onset-anticipation AUC across the whole cohort."
-        ),
+        "caption": _caption(fitted_on, basis, captured),
     }
 
 

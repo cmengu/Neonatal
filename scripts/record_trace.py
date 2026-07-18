@@ -149,6 +149,10 @@ def main() -> None:
         default=str(REPO_ROOT / "dashboard" / "public" / "trace" / f"{PID}.json"),
     )
     ap.add_argument("--no-llm", action="store_true", help="skip Tier 3 (debug; not for the demo)")
+    ap.add_argument("--no-world-model", action="store_true",
+                    help="skip the §7 JEPA world_model block (debug)")
+    ap.add_argument("--ckpt", default=str(REPO_ROOT / "models" / "jepa" / "jepa.pt"),
+                    help="JEPA checkpoint for the world_model block")
     args = ap.parse_args()
 
     pid = args.patient
@@ -513,6 +517,32 @@ def main() -> None:
     except Exception:
         commit = "unknown"
 
+    # ================= §7 world_model — the real JEPA block, on THIS window ================
+    # Until now the recorder stopped at the verdict, so a recorded trace had no `world_model`
+    # and the showtime hero could only ever run off the hand-assembled fixture. Recording it
+    # here is what closes that gap: the same absolute window the cascade just ran on, so the
+    # 3-D trajectory sits on the *same* shared grid as data-in / Tier 1 / Tier 2 / Tier 3
+    # rather than being stitched in from a separate export with its own window.
+    #
+    # The PCA basis is fitted on the recorder's OWN detected normal phase, not a fixed 90 —
+    # if this window opens with 40 calm windows, fitting the basis on 90 would fit it partly
+    # on the departure, which is exactly the thing spec §7 forbids.
+    world_model = None
+    if not args.no_world_model:
+        normal_phase = time_grid["phases"].get("normal")
+        normal_len = (normal_phase[1] - normal_phase[0] + 1) if normal_phase else args.n
+        try:
+            from scripts.export_jepa_trace import export_world_model
+
+            world_model = export_world_model(
+                args.ckpt, str(_PROCESSED / "all_patients_windowed.csv"), pid,
+                int(window_ids[0]), int(window_ids[-1]), normal_len,
+            )
+        except Exception as exc:
+            # A trace without the hero is still a valid trace (the block is optional in the
+            # #30 contract); a recorder that dies on a missing checkpoint is not.
+            print(f"  [warn] world_model block skipped ({type(exc).__name__}: {exc})")
+
     trace = {
         "schema_version": "1.0.0",
         "patient_id": pid,
@@ -525,6 +555,8 @@ def main() -> None:
         "tier3": tier3,
         "verdict": verdict_out,
     }
+    if world_model is not None:
+        trace["world_model"] = world_model
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -537,6 +569,9 @@ def main() -> None:
     print(f"  tier2: fired={tier2['fired']} crossing_idx={crossing_idx} may_quiet={tier2['quiet']['may_quiet']}")
     print(f"  tier3: ran={tier3.get('ran')} " + (f"level={tier3.get('concern_level')} action={tier3.get('recommended_action')!r}" if tier3.get("ran") else ""))
     print(f"  VERDICT: {verdict.level.value} risk={verdict.risk:.2f} floor={verdict.safety_floor.value} escalated_by={verdict.escalated_by}")
+    if world_model is not None:
+        print(f"  world_model: window={world_model['window']} sep_rise={world_model['sep_rise_calm_sd']} calm-SD  "
+              f"captured={world_model['pca']['novelty_captured']}  basis={world_model['pca']['basis']}")
     # Honesty cross-check: the replicated CUSUM must agree with the real assessor.
     if fired_ever and not (real_fired or replicated_fired_at_decision or last_signal_at):
         print("  [warn] CUSUM replication/real-assessor mismatch — inspect before trusting §4")
