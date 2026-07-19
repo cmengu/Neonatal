@@ -37,3 +37,8 @@ models/jepa/sweep/*.pt
 
 # Playwright raw capture scratch (final video lives at docs/demo/showtime-demo.*)
 docs/demo/.raw/
+
+# Staged feature regeneration output (scripts/regenerate_hrv_features.py).
+# Large derived CSVs — regenerate rather than commit. Promote deliberately with
+# --promote once the downstream JEPA retrain (#75) is ready to follow.
+data/processed/staging/
