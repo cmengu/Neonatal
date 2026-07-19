@@ -77,7 +77,7 @@ A Phase 5 live-LLM result is an improvement over Phase 4 if and only if:
 ## Phase 6 — Three-Way Comparison
 
 *Phase 6 recorded 2026-03-22. Groq API key exhausted — live-LLM rows pending key restoration.*
-*LoRA adapter pending training run in `notebooks/05_signal_specialist_lora.ipynb`.*
+*LoRA rows removed in #86 — never measured, and the path is gone. See below.*
 
 ### No-LLM Gate (CI-verified, rule-based path)
 
@@ -85,7 +85,6 @@ A Phase 5 live-LLM result is an improvement over Phase 4 if and only if:
 |----------|----|-----------|------------|----------|---|
 | Generalist (Phase 4) | 1.000 | 0.000 | 0.000 | 100% | 30 |
 | Multi-agent (Phase 5) | 1.000 | 0.000 | 0.000 | 100% | 30 |
-| Multi-agent + LoRA signal (Phase 6) | *pending* | *pending* | *pending* | *pending* | — |
 
 The no-LLM gate is a CI pass/fail check, not a quality measure. All rule-based paths map
 `risk_score > 0.70 → RED` deterministically, so F1=1.000 is structurally guaranteed.
@@ -96,17 +95,12 @@ The no-LLM gate is a CI pass/fail check, not a quality measure. All rule-based p
 |----------|----|-----------|------------|----------|-------------|-------|
 | Generalist single-prompt (Phase 4) | 0.533 | 0.000 | 0.000 | 66.7% | ~2s | Baseline |
 | Multi-agent, all Groq (Phase 5) | *pending* | *pending* | *pending* | *pending* | ~4s | Run when API restored |
-| Multi-agent + LoRA signal (Phase 6) | *pending* | *pending* | *pending* | *pending* | ~0.5s signal | Run after LoRA training |
 
 **To fill pending rows:**
 ```bash
 # Multi-agent live-LLM (Phase 5 row):
 QDRANT_PATH=qdrant_local python eval/eval_agent.py \
     --agent multi_agent --output results/eval_multiagent_live.json
-
-# Multi-agent + LoRA signal (Phase 6 row):
-USE_LORA_SIGNAL=1 QDRANT_PATH=qdrant_local python eval/eval_agent.py \
-    --agent multi_agent --output results/eval_lora.json
 ```
 
 ### Phase 6 Success Criteria
@@ -115,10 +109,10 @@ USE_LORA_SIGNAL=1 QDRANT_PATH=qdrant_local python eval/eval_agent.py \
 |-----------|--------|--------|
 | FIX-10 distribution logging | Present after any retrain | ✅ |
 | FIX-11 label gate in notebook | Cell 0 of notebook 05 | ✅ |
-| LoRA training data | ≥ 200 examples in data/lora_training/ | ✅ |
-| USE_LORA_SIGNAL toggle | Routes to local inference | ✅ |
+| LoRA training data | ≥ 200 examples in data/lora_training/ | ❌ removed (#86) |
+| USE_LORA_SIGNAL toggle | Routes to local inference | ❌ removed (#86) |
 | Multi-agent live F1 > 0.533 | Positive delta vs generalist | *pending* |
-| LoRA F1 ≥ multi-agent F1 | LoRA not worse than Groq specialist | *pending* |
+| LoRA F1 ≥ multi-agent F1 | LoRA not worse than Groq specialist | ❌ removed (#86) |
 | FNR(RED) = 0.000 all rows | Safety constraint holds | ✅ (no-LLM) |
 
 ---
@@ -160,3 +154,28 @@ USE_LORA_SIGNAL=1 QDRANT_PATH=qdrant_local python eval/eval_agent.py \
 | Services | 4 (neonatalguard-api, qdrant, eval-runner, signal-specialist) |
 | KB preload | Lifespan handler — warms SentenceTransformer + Qdrant on startup |
 | Tracing | LangSmith via existing `@traceable` decorators (no new instrumentation) |
+
+---
+
+## Removed: Phase-6 LoRA signal specialist (#86)
+
+Every LoRA row above was `*pending*` and now reads *removed*. The adapter was never
+trained, so **no measured result was deleted** — only the intent to measure one.
+
+The path is gone rather than gated. It ran: `synthetic_generator.py(sepsis=True,
+sepsis_severity=uniform(0.6, 1.0))` → a 230-example training set of which 30 records
+(13.0%) carried a `pre_sepsis` label → LoRA fine-tune of Phi-3-mini →
+`USE_LORA_SIGNAL=1` loading it as the **Tier 3 signal specialist**, the clinician-facing
+tier. Those labels were a number somebody typed. The dataset survey (#73) established
+that no public dataset gives this project real sepsis labels on beat-to-beat cardiac
+signal, so a synthetic label could never have been checked against one.
+
+Nothing was wrong on the day: the adapter directory did not exist and the flag was
+commented out in `.env.example`. It was dormant, not safe — a flag only a careful reader
+knows is dangerous is not a safeguard.
+
+What survives is `src/data/synthetic_generator.py`, whose literature-based neonatal HRV
+distributions are sound. Its `sepsis`/`sepsis_severity` parameters are replaced by a
+`departure={feature: fractional_shift}` argument that names perturbations by
+**magnitude, never by disease** — the basis for the detector-characterisation harness
+(#83), which measures what the cascade can see and makes no claim about any infant.
