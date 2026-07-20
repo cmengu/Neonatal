@@ -150,7 +150,9 @@ argument.
 ### Tier 1, separately
 
 Tier 1 is memoryless. With 5 trigger-capable features under i.i.d. noise, P(some feature
-clears z=2.0 in its pathological direction) ≈ 11% per window, so a single-feature YELLOW
+clears z=2.0 in its pathological direction) ≈ 12.9% per window — four one-sided features at
+P(z < −2) = 0.0228 each plus two-sided `mean_rr` at P(|z| > 2) = 0.0455, so
+1 − 0.9772⁴ × 0.9545 = 0.129 — so a single-feature YELLOW
 appears within a handful of windows on a stream containing no departure at all. Measured:
 the composed cascade fires at window 4 on a stream where Tier 2 alone never fires.
 
