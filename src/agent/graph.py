@@ -6,7 +6,7 @@ Node flow:
 Key design decisions:
 - _is_eval_mode() is called per-node (not cached at import time), so tests that set
   os.environ["EVAL_NO_LLM"] = "1" programmatically after import are respected.
-- _build_groq_client() raises RuntimeError on missing/placeholder key rather than
+- _build_llm_client() raises RuntimeError on missing/placeholder key rather than
   silently falling through to rule-based mode in production.
 - retrieve_context_node uses local on-disk Qdrant (qdrant_local/) by default,
   overridable via QDRANT_PATH env var for Docker/remote deployments.
@@ -19,7 +19,7 @@ from typing import Optional, TypedDict
 
 import instructor
 from dotenv import load_dotenv
-from groq import Groq
+from anthropic import Anthropic
 from langgraph.graph import END, StateGraph
 from langsmith import traceable
 
@@ -41,31 +41,46 @@ def _is_eval_mode() -> bool:
 
     Checking at call-time (rather than storing a module-level boolean) means that
     Phase 4 test code that does os.environ["EVAL_NO_LLM"] = "1" after importing
-    this module will correctly gate every Groq call.
+    this module will correctly gate every LLM call.
     """
     return os.getenv("EVAL_NO_LLM", "").lower() in {"1", "true", "yes"}
 
 
-def _build_groq_client():
-    """Construct the Instructor-wrapped Groq client.
+# The Tier-3 model, in one place. Every specialist imports these rather than
+# repeating the string — swapping models is a one-line change here.
+#
+# `temperature` is deliberately absent from every call site: Claude Opus 4.7 and
+# later **reject** temperature/top_p/top_k with a 400. Steer with the prompt instead.
+# `max_tokens` is required by the Anthropic API (it has no default).
+LLM_MODEL = "claude-opus-4-8"
+LLM_MAX_TOKENS = 2048
 
-    Fails closed: if GROQ_API_KEY is missing or still the placeholder value,
+
+def _build_llm_client():
+    """Construct the Instructor-wrapped Anthropic client.
+
+    Fails closed: if ANTHROPIC_API_KEY is missing or still a placeholder,
     raises RuntimeError rather than returning None and silently falling back to
     rule-based output.
+
+    Instructor wraps the official ``anthropic`` SDK and enforces the Pydantic
+    ``response_model`` on every call, retrying on validation failure — which is why
+    the call sites keep ``max_retries`` and their existing ``.chat.completions.create``
+    shape across the provider swap.
     """
-    api_key = os.getenv("GROQ_API_KEY", "")
-    if not api_key or api_key == "your_groq_api_key_here":
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not api_key or api_key.startswith(("your_", "PASTE")):
         raise RuntimeError(
-            "GROQ_API_KEY is missing or still set to the placeholder value. "
+            "ANTHROPIC_API_KEY is missing or still set to a placeholder value. "
             "Set a real key in .env or export EVAL_NO_LLM=1 for non-LLM mode."
         )
-    return instructor.from_groq(Groq(api_key=api_key), mode=instructor.Mode.JSON)
+    return instructor.from_anthropic(Anthropic(api_key=api_key))
 
 
-# Groq client initialised at import time for production efficiency.
+# LLM client initialised at import time for production efficiency.
 # Per-call _is_eval_mode() checks inside each node still gate every API call,
 # so setting EVAL_NO_LLM after import works correctly in programmatic tests.
-_GROQ = None if _is_eval_mode() else _build_groq_client()
+_LLM = None if _is_eval_mode() else _build_llm_client()
 
 # ClinicalKnowledgeBase singleton — initialised once on first retrieve_context_node call.
 # On-disk Qdrant uses an exclusive file lock; recreating the client on every invoke()
@@ -74,13 +89,13 @@ _GROQ = None if _is_eval_mode() else _build_groq_client()
 _KB: ClinicalKnowledgeBase | None = None
 
 
-def _get_groq():
-    """Return the Groq client, initialising lazily if the module was first imported
+def _get_llm():
+    """Return the LLM client, initialising lazily if the module was first imported
     in eval mode and is now being used in live mode within the same process."""
-    global _GROQ
-    if _GROQ is None:
-        _GROQ = _build_groq_client()
-    return _GROQ
+    global _LLM
+    if _LLM is None:
+        _LLM = _build_llm_client()
+    return _LLM
 
 
 def _get_kb() -> ClinicalKnowledgeBase:
@@ -164,7 +179,7 @@ def retrieve_context_node(state: AgentState) -> dict:
 
 @traceable(name="llm_reasoning_node")
 def llm_reasoning_node(state: AgentState) -> dict:
-    """Call Groq to produce a structured LLMOutput, or fall back to rule-based output.
+    """Call the LLM to produce a structured LLMOutput, or fall back to rule-based output.
 
     The rule-based path is active when EVAL_NO_LLM is set at call time.
     Checked via _is_eval_mode() — not a module-level constant — so programmatic
@@ -220,11 +235,11 @@ Retrieved clinical context:
 
 Generate a structured neonatal clinical alert. Be specific about which HRV values are abnormal and why. Recommended actions must follow standard NICU protocols."""
 
-    output: LLMOutput = _get_groq().chat.completions.create(
-        model="llama-3.3-70b-versatile",
+    output: LLMOutput = _get_llm().chat.completions.create(
+        model=LLM_MODEL,
         response_model=LLMOutput,
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.1,
+        max_tokens=LLM_MAX_TOKENS,
         max_retries=3,
     )
     return {"llm_output": output}

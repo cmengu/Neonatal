@@ -58,18 +58,11 @@ flowchart TD
         CATFILT --> SPARSE
     end
 
-    subgraph LoRA ["Signal Specialist — Phase 6 LoRA (optional)"]
-        PHI[Phi-3-mini-4k<br/>+ LoRA adapter]
-        LORA[signal_specialist_lora/<br/>models/exports/]
-        PHI --> LORA
-    end
-
     ONNX --> SV
     ONNX --> G1
     RNK -->|clinical chunks| SA
     RNK -->|clinical chunks| BA
     RNK -->|clinical chunks| CA
-    LORA -->|USE_LORA_SIGNAL=1| SA
 
     AM --> AUD[(audit.db<br/>alert_history<br/>z_scores_json · hrv_values_json)]
     G6 --> AUD
@@ -90,7 +83,6 @@ flowchart TD
     style Generalist fill:#2a2a3a,color:#fff,stroke:#8888ff
     style MultiAgent fill:#1a3a2a,color:#fff,stroke:#4aff88
     style RAG fill:#3a1a3a,color:#fff,stroke:#cc88ff
-    style LoRA fill:#3a2a1a,color:#fff,stroke:#ffaa44
     style API fill:#3a1a1a,color:#fff,stroke:#ff6666
 ```
 
@@ -124,7 +116,6 @@ Two agent implementations share the same `NeonatalAlert` output schema and are b
 |-------|----|-----------|------------|----------|
 | Generalist (Phase 4) | 0.533 | 0.000 | 0.000 | 66.7% |
 | Multi-agent (Phase 5) | *pending API key* | — | — | — |
-| Multi-agent + LoRA signal (Phase 6) | *pending training* | — | — | — |
 
 **F1=0.533 in live-LLM mode** reflects YELLOW↔GREEN confusion: the generalist conflates signal interpretation with action selection in a single prompt. FNR(RED)=0.000 in both modes — the safety constraint holds. Phase 5 multi-agent is expected to improve F1 by separating signal classification, bradycardia assessment, and clinical reasoning into specialist prompts.
 
@@ -161,7 +152,7 @@ Each specialist retrieves domain-specific context. Two deviating signals → two
 ```bash
 git clone https://github.com/your-handle/neonatalguard
 cd neonatalguard
-cp .env.example .env          # add GROQ_API_KEY, LANGSMITH_API_KEY
+cp .env.example .env          # add ANTHROPIC_API_KEY, LANGSMITH_API_KEY
 docker-compose up              # starts neonatalguard-api + qdrant
 ```
 
@@ -193,15 +184,11 @@ QDRANT_PATH=qdrant_local python eval/eval_agent.py --agent multi_agent
 
 # RAG retrieval comparison:
 python eval/eval_retrieval.py --mode both
-
-# LoRA signal specialist (after training):
-USE_LORA_SIGNAL=1 QDRANT_PATH=qdrant_local python eval/eval_agent.py --agent multi_agent
 ```
 
 Docker profiles:
 ```bash
 docker compose --profile eval up    # adds eval-runner container
-docker compose --profile lora up    # adds signal-specialist (Ollama + LoRA adapter)
 ```
 
 ---
@@ -220,8 +207,8 @@ Phase 4 live-LLM eval identified the exact failure mode: YELLOW↔GREEN confusio
 **4. Bradycardia specialist is conditional, not always-on.**
 Brady agent runs only when `detected_events > 0 OR max_z > 2.0`. For ~80% of patients who are stable, the brady specialist is skipped, reducing latency and avoiding irrelevant context injection into the clinical reasoning step.
 
-**5. LoRA-fine-tuned Phi-3-mini for signal specialist (Phase 6).**
-The signal specialist's task — classifying autonomic HRV patterns from z-score deviations — is narrow, structured, and fully representable in a 200-example fine-tuning dataset. A local Phi-3-mini LoRA adapter eliminates one Groq API call per inference (~0.5s latency), reduces token cost, and works offline.
+**5. No local fine-tuned signal model — removed in #86.**
+A Phase-6 LoRA path once fine-tuned Phi-3-mini for the signal specialist. It was removed, not gated. The 230-example training set it learned from was 40% synthetic cases whose labels came from a `sepsis_severity` float drawn from `uniform(0.6, 1.0)` — 30 records carried a `pre_sepsis` label that was a number somebody typed, not an outcome anyone adjudicated. A clinician-facing tier reasoning from that model would have been presenting invented labels as physiology. The adapter was never trained and every LoRA row in `BENCHMARKS.md` was still *pending*, so no measured result was lost. A local signal model remains a reasonable idea; it must be trained on labels from outside this repo.
 
 **6. Hybrid RAG with category-filtered retrieval over embedding-only.**
 At 34 chunks, dense-only MRR=0.793. Hybrid + rerank achieves MRR=0.960. More importantly, category filtering per specialist ensures the signal agent only sees HRV/sepsis reference chunks — not intervention thresholds that belong to the clinical agent. Without filtering, the signal agent picks up clinical action language and conflates pattern classification with action selection.
@@ -247,7 +234,6 @@ The SentenceTransformer model (90 MB) and Qdrant file lock are initialised once 
 | Groq API | `EVAL_NO_LLM=1` or network failure | Rule-based path: `risk_score > 0.70 → RED` | Degraded explanation, alert still fires |
 | Qdrant KB | Init failure at startup | `rag_context = []` — health endpoint reports error | Lower quality explanation, alert still fires |
 | ONNX model | `FileNotFoundError` on startup | Clear error with fix instructions | Pipeline unavailable |
-| LoRA adapter | JSON parse failure in `_lora_signal_inference()` | Falls back to `_rule_based_signal()` | No crash, degraded signal classification |
 | SQLite audit.db | WAL mode + 30s timeout | Retry without blocking readers | None under normal load |
 | FlashRank reranker | Exception caught | Returns RRF-merged results without reranking | Slightly lower RAG quality |
 
@@ -258,8 +244,6 @@ The SentenceTransformer model (90 MB) and Qdrant file lock are initialised once 
 ## Known Limitations
 
 **Live-LLM multi-agent eval pending.** Groq API key was exhausted during Phase 5/6 recording. The no-LLM gate passes at F1=1.000. Live-LLM rows in `BENCHMARKS.md` are marked *pending* until the key is restored.
-
-**LoRA adapter not yet trained.** Phase 6 notebook `05_signal_specialist_lora.ipynb` generated 200+ training examples in `data/lora_training/`. The training run is pending. `USE_LORA_SIGNAL=1` wires the inference path; the adapter weight files do not exist yet.
 
 **CUSUM-style gradual drift not implemented.** The current pipeline detects per-window deviations from the rolling baseline. A neonate gradually deteriorating over 48h (each window individually within threshold, cumulative trend clearly abnormal) will not be flagged until a single window crosses the z-score threshold. Fix: add a CUSUM accumulator persisted to `audit.db`.
 
@@ -279,7 +263,7 @@ src/
     memory.py             # EpisodicMemory — audit.db read/write with full input logging
     schemas.py            # NeonatalAlert, LLMOutput, SignalAssessment, BradycardiaAssessment
     specialists/
-      signal_agent.py     # HRV autonomic pattern classifier (Groq or LoRA)
+      signal_agent.py     # HRV autonomic pattern classifier
       brady_agent.py      # Bradycardia event specialist (conditional routing)
       clinical_agent.py   # Clinical reasoning — intervention thresholds
       protocol_agent.py   # Protocol compliance — APPROVED_ACTIONS enforcement
@@ -317,7 +301,6 @@ notebooks/
   02_signal_cleaning.ipynb          # RR-interval cleaning pipeline
   03_hrv_extraction.ipynb           # HRV feature extraction (10 features)
   04_feature_engineering.ipynb      # z-score baseline computation
-  05_signal_specialist_lora.ipynb   # LoRA training data generation + Phi-3-mini fine-tune
 
 data/
   processed/              # Per-patient HRV CSVs + windowed z-score files
@@ -326,9 +309,8 @@ data/
 models/exports/
   neonatalguard_v1.onnx           # Trained bradycardia-onset classifier
   feature_cols.pkl                # Locked feature column order
-  signal_specialist_lora/         # LoRA adapter weights (Phase 6, pending)
 
 qdrant_local/             # On-disk Qdrant store (34 clinical knowledge chunks)
 results/                  # Eval output JSON files
-docker-compose.yml        # 4 services: api, qdrant, eval-runner, signal-specialist (LoRA)
+docker-compose.yml        # 3 services: api, qdrant, eval-runner
 ```

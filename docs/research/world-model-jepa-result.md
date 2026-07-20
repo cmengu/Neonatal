@@ -20,16 +20,42 @@ and decisively better than the linear baseline:
 
 | Metric (held-out, per-infant standardised) | JEPA (h16_m50) | VAR(1) baseline |
 |---|---|---|
-| **Onset-anticipation — surprise** (rise in the 5 windows *before* a departure onset; 3 563 onsets) | **0.758** (median infant 0.76) | ~chance |
+| **Onset-anticipation — surprise** (rise in the 5 windows *before* a departure onset; 3 571 onsets) | **0.772** (median infant 0.77) | ~chance |
 | **Departure-vs-calm — embedding novelty** (concurrent separation) | **0.678** | 0.527 |
-| **Onset-anticipation — embedding novelty** | 0.645 | — |
-| Demo-window embedding drift (infant7 `[1240,1419]`, vs full calm cloud) | **1.56 calm-SD**, peak **1.5× the cloud edge** | — |
+| **Onset-anticipation — embedding novelty** | 0.626 | — |
+| Demo-window embedding drift (infant7 `[2740,2919]`, vs full calm cloud) | **1.31 calm-SD**, peak **1.9× the cloud edge** | — |
+
+> **Re-measured on the #18-corrected data (2026-07-18).** Everything above was originally
+> measured on the pre-#18 feature stream — the model was trained, swept and scored before the
+> bradycardia data-integrity fix landed, and the two lived on branches that had never met. On the
+> corrected stream the **headline anticipation AUC survives and slightly improves, 0.758 →
+> 0.772**, which is the reassuring half. The demo window did not survive: the original
+> `[1240,1419]` no longer opens calm, and its drift collapses **1.56 → 0.41 calm-SD**. It has been
+> replaced by `[2740,2919]`, this infant's strongest remaining calm-opening departure. The
+> checkpoint itself is still the pre-fix one; **retraining on the corrected stream is open work**,
+> and the numbers here should be re-run when it happens.
 
 **Two signals, one coherent story.** Embedding **novelty** measures *where the state is*
 (distance from the infant's calm cloud) → it separates *sustained* departures concurrently.
 **Surprise** measures *that the state is changing* (latent prediction error) → it fires at the
 *onset transition*, so it **anticipates**. They are complementary, and the demo uses both: the
-3-D embedding visibly leaves the learned-normal cloud while surprise spikes at the turn.
+3-D embedding leaves the learned-normal cloud while surprise spikes at the turn.
+
+**What the 3-D hero can and cannot show.** The departure is *diffuse* — spread thinly across
+the 48 embedding dimensions rather than concentrated in a few. Three axes carry only **64%** of
+it (`pca.novelty_captured`), so the dot's on-screen travel is a fraction of the real
+displacement, and the panel now says so. Two things were tried and rejected on measurement:
+whitening the basis into the Mahalanobis metric (helps on one window, *hurts* on the other, and
+halves `novelty_captured` on both — it was fitting the basis to the example), and reading the
+visible drift as the finding (the window with the strongest true signal, 1.31 calm-SD, has the
+*weakest* visible drift, 0.21). No 3-axis linear projection recovers this departure. The hero is
+therefore driven by novelty and surprise, with position as context — not the other way round.
+
+**The demo window is a case study, not a summary.** Across 2 308 candidate 180-window slices
+that open calm, the *median* novelty rise is **0.08 calm-SD**: most of the record has nothing to
+show. The shipped window sits near the 99th percentile. That is a legitimate way to illustrate a
+real signal and a dishonest way to summarise one — so the cohort-wide anticipation AUC above
+stays the claim, and the panel caption states the selection explicitly.
 
 **This clears the "promising" bar honestly** (owner's definition: *a meaningful embedding
 departure from normal during deterioration, and/or rising surprise around real events*):

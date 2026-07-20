@@ -398,6 +398,14 @@ export function EmbeddingWarp({ wm }: { wm: WorldModel }) {
           {(wm.pca.variance_explained[1] * 100).toFixed(0)}% · PC3{" "}
           {(wm.pca.variance_explained[2] * 100).toFixed(0)}% variance · basis fit on normal phase
         </div>
+        {/* The honest counterpart to the variance figures: how much of the *departure* these
+            axes can show at all. Stated on the panel because a viewer watching the dot barely
+            move would otherwise read that as "the model saw nothing", when in fact most of the
+            movement is in directions no 3-D plot can render. */}
+        <div className="mt-0.5 font-mono text-[9.5px] text-amber-700/80">
+          these axes carry {(wm.pca.novelty_captured * 100).toFixed(0)}% of the departure ·
+          the rest moves off-screen
+        </div>
       </div>
 
       {/* live novelty / surprise readout */}

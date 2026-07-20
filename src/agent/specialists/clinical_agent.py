@@ -40,7 +40,7 @@ def clinical_agent_node(state: dict) -> dict:
         from src.agent.graph import llm_reasoning_node
         return llm_reasoning_node(state)
 
-    from src.agent.graph import _get_groq, _get_kb
+    from src.agent.graph import LLM_MAX_TOKENS, LLM_MODEL, _get_kb, _get_llm
 
     sa = state.get("signal_assessment")
     ba = state.get("bradycardia_assessment")
@@ -87,11 +87,11 @@ Clinical intervention guidelines:
 
 Generate a structured neonatal clinical alert. Recommended actions must follow standard NICU protocols."""
 
-    output: LLMOutput = _get_groq().chat.completions.create(
-        model="llama-3.3-70b-versatile",
+    output: LLMOutput = _get_llm().chat.completions.create(
+        model=LLM_MODEL,
         response_model=LLMOutput,
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.1,
+        max_tokens=LLM_MAX_TOKENS,
         max_retries=3,
     )
     return {"llm_output": output}

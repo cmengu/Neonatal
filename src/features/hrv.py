@@ -12,6 +12,10 @@ Histogram (#13):   sample_asymmetry — R2/R1 deceleration-burden statistic
 discriminators added in issue #13 (research gate:
 docs/research/cardiorespiratory-feature-validation.md, issue #10). They replace
 the crude RR-tail proxies (``rr_ms_max``/``rr_ms_75%``) as Tier-1 triggers.
+Both are computed over the long trailing ``rr_long`` window rather than the
+~50-beat HRV window — see ``compute_hrv_features`` for the measurement that moved
+``sample_asymmetry`` onto it, and for the unresolved absolute-level question
+against Kovatchev's reported baseline.
 
 The authoritative ordered column name list is in ``src.features.constants.HRV_FEATURE_COLS``.
 The keys returned by ``compute_hrv_features()`` must stay in sync with that list.
@@ -25,7 +29,7 @@ from scipy.spatial import cKDTree
 # Neonatal defaults from the #10 research gate: m=3 (Lake 2002, PMID 12185014),
 # r=0.2×SD (Richman & Moorman 2000, PMID 10843903; PhysioNet ``sampen``). The
 # *window length* N≈4096 (~20–25 min) lives with the pipeline that supplies
-# ``rr_entropy`` (scripts/run_nb03.py), because SampEn slides "per the existing
+# ``rr_long`` (scripts/run_nb03.py), because SampEn slides "per the existing
 # Tier-1 cadence" — the window is long, the step stays the fast HRV step.
 # [UNVERIFIED] exact r/N from the neonatal primary (paywalled); relax r upward
 # for short/noisy windows. These are tunable, not primary-verified constants.
@@ -219,7 +223,7 @@ def _sample_asymmetry(rr_ms: np.ndarray) -> float:
     return r2 / r1
 
 
-def compute_hrv_features(rr_ms: np.ndarray, rr_entropy: np.ndarray | None = None) -> dict:
+def compute_hrv_features(rr_ms: np.ndarray, rr_long: np.ndarray | None = None) -> dict:
     """
     Compute all HRV features from a 1D array of RR intervals (ms).
 
@@ -232,14 +236,42 @@ def compute_hrv_features(rr_ms: np.ndarray, rr_entropy: np.ndarray | None = None
     ----------
     rr_ms : np.ndarray
         1D array of RR intervals in milliseconds for this window. Must be non-empty.
-        All statistics except ``sampen`` are computed on this window.
-    rr_entropy : np.ndarray, optional
+        The time-domain statistics are computed on this window.
+    rr_long : np.ndarray, optional
         The (typically longer, ~4096-interval / ~20–25 min) trailing RR series over
-        which ``sampen`` is computed — SampEn needs far more beats than the ~50-beat
-        HRV window to be stable, so the pipeline slides a long window "per the existing
-        Tier-1 cadence" (issue #13; docs/research/cardiorespiratory-feature-validation.md).
-        When ``None``, SampEn falls back to ``rr_ms``; when too short it is NaN
+        which **both HeRO discriminators** — ``sampen`` and ``sample_asymmetry`` — are
+        computed. Both need far more beats than the ~50-beat HRV window to be stable,
+        so the pipeline slides a long window "per the existing Tier-1 cadence"
+        (issue #13; docs/research/cardiorespiratory-feature-validation.md).
+        When ``None``, both fall back to ``rr_ms``; when too short they are NaN
         (cold-start), which the direction-aware floor treats as non-triggering.
+
+        ``sample_asymmetry`` was moved onto this window from the 50-beat window on
+        measured evidence: R2/R1 is a ratio of sums of squared deviations about the
+        median, and at n=50 the denominator can approach zero, so the statistic has an
+        unbounded tail. Measured across all 10 PICS infants, the pooled maximum falls
+        from **745.5 at n=50 to 80.8 at n=4096** (median stable at ~1.5 throughout).
+        A trigger-capable feature that can emit 745 is unusable once z-scored — one
+        such window inflates the per-infant SD enough to desensitise the trigger for
+        the rest of the record. The cited source computes over the HeRO operational
+        window, not a 50-beat one (Kovatchev 2003, PMID 12930915; Moorman 2011).
+
+        The corrected window also reproduces the published baseline, which the 50-beat
+        window did not. Kovatchev reports a **mean** of 3.3 (SD 1.6) in health. Measured
+        on this cohort (1,272 sampled windows, all 10 infants):
+
+            statistic          Kovatchev 2003    n=50      n=4096
+            mean                    3.3          6.65      3.375
+            SD                      1.6          39.5      1.68  (IQR/1.349)
+
+        The distribution is heavy-tailed, so the raw SD (6.31) is not a usable scale
+        estimate; the robust IQR-based estimate is the one comparable to the paper's.
+        Our tail is heavier than theirs even at n=4096 (p99 33.8, max 64.7), so treat
+        agreement as "same central tendency and scale", not "same distribution".
+
+        Direction is independently corroborated: Kovatchev attributes the pre-sepsis
+        rise "mainly to fewer accelerations", i.e. a shrinking R1 — which is what the
+        high-only trigger wiring encodes.
 
     Raises
     ------
@@ -257,7 +289,8 @@ def compute_hrv_features(rr_ms: np.ndarray, rr_entropy: np.ndarray | None = None
     pnn50   = float(np.sum(np.abs(np.diff(rr)) > 50) / max(n - 1, 1) * 100) if n > 1 else 0.0
     lf_hf   = _compute_lf_hf(rr)
 
-    entropy_src = rr if rr_entropy is None else np.asarray(rr_entropy, dtype=np.float64)
+    # The long trailing window feeds both HeRO discriminators (see rr_long above).
+    long_src = rr if rr_long is None else np.asarray(rr_long, dtype=np.float64)
 
     return {
         "mean_rr":          mean_rr,
@@ -270,8 +303,8 @@ def compute_hrv_features(rr_ms: np.ndarray, rr_entropy: np.ndarray | None = None
         "rr_ms_25%":        float(np.percentile(rr, 25)),
         "rr_ms_50%":        float(np.percentile(rr, 50)),
         "rr_ms_75%":        float(np.percentile(rr, 75)),
-        "sampen":           _sampen(entropy_src),
-        "sample_asymmetry": _sample_asymmetry(rr),
+        "sampen":           _sampen(long_src),
+        "sample_asymmetry": _sample_asymmetry(long_src),
     }
 
 
@@ -279,7 +312,7 @@ def get_window_features(
     rr_intervals: np.ndarray,
     record_name: str,
     window_idx: int,
-    rr_entropy: np.ndarray | None = None,
+    rr_long: np.ndarray | None = None,
 ) -> dict:
     """
     Encode a window of RR intervals with record metadata for feature matrix rows.
@@ -292,16 +325,17 @@ def get_window_features(
         Infant record identifier (e.g. 'infant1').
     window_idx : int
         Index of this window within the recording.
-    rr_entropy : np.ndarray, optional
-        The trailing long window over which ``sampen`` is computed (issue #13). See
-        ``compute_hrv_features``. When ``None``, SampEn falls back to ``rr_intervals``.
+    rr_long : np.ndarray, optional
+        The trailing long window over which both HeRO discriminators (``sampen`` and
+        ``sample_asymmetry``) are computed (issue #13). See ``compute_hrv_features``.
+        When ``None``, both fall back to ``rr_intervals``.
 
     Returns
     -------
     dict
         Feature dict with record_name, window_idx, plus all keys from compute_hrv_features().
     """
-    features = compute_hrv_features(rr_intervals, rr_entropy=rr_entropy)
+    features = compute_hrv_features(rr_intervals, rr_long=rr_long)
     features["record_name"] = record_name
     features["window_idx"]  = window_idx
     return features

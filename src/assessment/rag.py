@@ -10,7 +10,7 @@ Two cascade-level rules govern this tier (enforced in ``cascade.py``, not here):
 
 The cascade identifies this tier by its ``source`` attribute (``"rag"``) so it can skip the
 expensive LLM without invoking it. The graph is injectable so the seam is testable with a
-fake — no Groq / Qdrant / ONNX in unit tests.
+fake — no Anthropic / Qdrant / ONNX in unit tests.
 
 Guideline grounding (see ``docs/research/rag-guideline-grounding-neonatal-sepsis.md``): the
 wrapped graph's clinical vocabulary and actions are grounded in NICE NG195 + AAP/COFN preterm;
@@ -32,7 +32,7 @@ class RagVerdictAssessor:
     source = "rag"
 
     def __init__(self, graph: Any | None = None) -> None:
-        # Lazily bound: importing ``multi_agent`` pulls in Groq/Qdrant, so defer it until
+        # Lazily bound: importing ``multi_agent`` pulls in Anthropic/Qdrant, so defer it until
         # the tier actually runs (and let tests inject a fake graph instead).
         self._graph = graph
 

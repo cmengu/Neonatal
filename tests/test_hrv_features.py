@@ -50,8 +50,8 @@ def test_sampen_lower_for_regular_than_irregular():
     regular = 400.0 + 8.0 * np.sin(2 * np.pi * t / 20.0)
     irregular = 400.0 + _rng(2).normal(0, 8.0, 600)
 
-    s_regular = compute_hrv_features(regular[:50], rr_entropy=regular)["sampen"]
-    s_irregular = compute_hrv_features(irregular[:50], rr_entropy=irregular)["sampen"]
+    s_regular = compute_hrv_features(regular[:50], rr_long=regular)["sampen"]
+    s_irregular = compute_hrv_features(irregular[:50], rr_long=irregular)["sampen"]
 
     assert math.isfinite(s_regular) and math.isfinite(s_irregular)
     assert s_regular < s_irregular
@@ -60,7 +60,7 @@ def test_sampen_lower_for_regular_than_irregular():
 def test_sampen_nan_when_entropy_window_too_short():
     # Cold-start contract: below a computable length SampEn is NaN, never a
     # fabricated value. NaN must not trigger the floor (see deviation tests).
-    feats = compute_hrv_features(np.full(50, 400.0), rr_entropy=np.array([]))
+    feats = compute_hrv_features(np.full(50, 400.0), rr_long=np.array([]))
     assert math.isnan(feats["sampen"])
 
 
@@ -72,8 +72,8 @@ def test_sampen_rejects_a_single_artifact_spike():
     spiked = base.copy()
     spiked[300] = 1200.0  # a single implausible interval (dropped-beat artifact)
 
-    s_clean = compute_hrv_features(base[:50], rr_entropy=base)["sampen"]
-    s_spiked = compute_hrv_features(spiked[:50], rr_entropy=spiked)["sampen"]
+    s_clean = compute_hrv_features(base[:50], rr_long=base)["sampen"]
+    s_spiked = compute_hrv_features(spiked[:50], rr_long=spiked)["sampen"]
 
     # Rejection keeps the spiked estimate close to the clean one rather than
     # letting the spike crater the entropy.
@@ -115,8 +115,8 @@ def test_sample_asymmetry_symmetric_series_is_near_one():
 
 def test_features_are_deterministic():
     x = 400.0 + _rng(5).normal(0, 8.0, 300)
-    f1 = compute_hrv_features(x[:50], rr_entropy=x)
-    f2 = compute_hrv_features(x[:50], rr_entropy=x)
+    f1 = compute_hrv_features(x[:50], rr_long=x)
+    f2 = compute_hrv_features(x[:50], rr_long=x)
     assert f1 == f2
 
 

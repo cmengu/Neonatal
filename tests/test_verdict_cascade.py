@@ -23,10 +23,11 @@ class FakeAssessor:
 
     def __init__(self, level: ConcernLevel, source: str, risk: float = 0.5,
                  soft_floor: bool = False, may_quiet: bool = False,
-                 quiets_soft_floor: bool = False,
+                 quiets_soft_floor: bool = False, observational: bool = False,
                  recommended_action=None, primary_indicators=(), citations=()):
         self.source = source
         self.quiets_soft_floor = quiets_soft_floor
+        self.observational = observational
         self.called = False
         self._a = Assessment(
             level=level, risk=risk, confidence=0.9,
@@ -348,3 +349,80 @@ def test_soft_quiet_re_escalates_deterministically_when_drift_persists():
     assert ConcernLevel.GREEN in levels
     # ...but persistence re-escalates deterministically — it does not stay quiet forever.
     assert levels[-1] >= ConcernLevel.YELLOW
+
+
+# --- Observational tiers: watch, never vote (#59) ---------------------------------
+
+
+def _voting_pair():
+    """A calm deterministic floor + a calm Tier 2 — the baseline the watcher must not disturb."""
+    return [
+        FakeAssessor(ConcernLevel.GREEN, "deviation", risk=0.05),
+        FakeAssessor(ConcernLevel.GREEN, "temporal", risk=0.10, quiets_soft_floor=True),
+    ]
+
+
+def test_observational_tier_rides_in_the_trace_but_changes_no_verdict_field():
+    """The whole point of the capability: identical Verdict, one extra Assessment.
+
+    Compared field-by-field rather than on ``level`` alone — the headline is picked by
+    ``(level, risk)``, so a GREEN watcher with the highest risk captures every human-facing
+    field while leaving the level untouched. That is the bug this capability exists to stop.
+    """
+    without = VerdictCascade(tiers=_voting_pair()).assess(_ctx())
+    watcher = FakeAssessor(ConcernLevel.GREEN, "jepa_surprise", risk=0.99, observational=True)
+    with_obs = VerdictCascade(tiers=_voting_pair() + [watcher]).assess(_ctx())
+
+    assert with_obs.model_dump(exclude={"assessments"}) == without.model_dump(exclude={"assessments"})
+    assert watcher.called  # it really ran — the equality is not the trivial "tier skipped"
+    assert [a.source for a in with_obs.assessments] == ["deviation", "temporal", "jepa_surprise"]
+
+
+def test_observational_capability_contains_a_tier_that_breaks_its_own_discipline():
+    """Structural, not trust-based: a watcher that goes rogue is still fully contained.
+
+    The real ``JepaSurpriseAssessor`` pins itself GREEN / ``may_quiet=False``. If that
+    discipline ever regresses — a refactor, a new learned tier copying the pattern — the
+    cascade must still hold. So the rogue here escalates to RED, claims a soft-floor quiet,
+    and declares the arbiter capability; the Verdict must be untouched regardless.
+    """
+    rogue = FakeAssessor(
+        ConcernLevel.RED, "jepa_surprise", risk=1.0,
+        may_quiet=True, quiets_soft_floor=True, observational=True,
+        recommended_action="ROGUE ACTION", primary_indicators=["rogue"], citations=["rogue"],
+    )
+    without = VerdictCascade(tiers=_voting_pair()).assess(_ctx())
+    with_rogue = VerdictCascade(tiers=_voting_pair() + [rogue]).assess(_ctx())
+
+    assert with_rogue.model_dump(exclude={"assessments"}) == without.model_dump(exclude={"assessments"})
+    assert with_rogue.level is ConcernLevel.GREEN
+    assert "jepa_surprise" not in with_rogue.escalated_by
+    assert with_rogue.recommended_action != "ROGUE ACTION"
+
+
+def test_observational_tier_cannot_quiet_a_soft_floor():
+    """A watcher holding the arbiter capability must still not lower a quietable YELLOW."""
+    tiers = [
+        FakeAssessor(ConcernLevel.YELLOW, "deviation", soft_floor=True),
+        FakeAssessor(ConcernLevel.GREEN, "jepa_surprise", may_quiet=True,
+                     quiets_soft_floor=True, observational=True),
+    ]
+    assert VerdictCascade(tiers=tiers).assess(_ctx()).level is ConcernLevel.YELLOW
+
+
+def test_observational_tier_cannot_provoke_the_expensive_rag_tier():
+    """A watcher's level must not defeat the Tier-3 short-circuit and spend an LLM call."""
+    rag = FakeAssessor(ConcernLevel.RED, "rag")
+    tiers = _voting_pair() + [
+        FakeAssessor(ConcernLevel.RED, "jepa_surprise", risk=1.0, observational=True),
+        rag,
+    ]
+    verdict = VerdictCascade(tiers=tiers).assess(_ctx())
+    assert not rag.called, "observational tier defeated the GREEN short-circuit"
+    assert verdict.level is ConcernLevel.GREEN
+
+
+def test_all_observational_cascade_still_produces_a_verdict():
+    """Degenerate misconfiguration must not raise on an empty ``max``."""
+    tiers = [FakeAssessor(ConcernLevel.GREEN, "jepa_surprise", observational=True)]
+    assert VerdictCascade(tiers=tiers).assess(_ctx()).level is ConcernLevel.GREEN

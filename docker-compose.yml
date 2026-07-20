@@ -1,7 +1,6 @@
 # NeonatalGuard — 4-service Docker Compose
 # Default: starts api + qdrant
 # Eval profile:  docker compose --profile eval up
-# LoRA profile:  docker compose --profile lora up
 services:
 
   neonatalguard-api:
@@ -57,13 +56,6 @@ services:
       qdrant:
         condition: service_healthy
     profiles: ["eval"]
-    platform: linux/arm64
-
-  signal-specialist:
-    image: ollama/ollama
-    volumes:
-      - ./models/exports/signal_specialist_lora:/models
-    profiles: ["lora"]
     platform: linux/arm64
 
 volumes:

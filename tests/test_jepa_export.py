@@ -11,7 +11,8 @@ import pandas as pd
 import pytest
 import torch
 
-from scripts.export_jepa_trace import _pca_fit, _project, export_world_model
+from scripts.export_jepa_trace import (MIN_BASIS_POINTS, _captured_fraction, _pca_fit,
+                                       _project, _whiten_fit, export_world_model)
 from src.world_model.jepa import JEPA, JEPAConfig, save_checkpoint
 from src.world_model.jepa_data import FEATURES
 
@@ -129,3 +130,109 @@ def test_export_rejects_unknown_infant(artifacts):
     ckpt, csv = artifacts
     with pytest.raises(SystemExit):
         export_world_model(ckpt, csv, "infantZ", 20, 80, 25)
+
+
+# --- honesty metrics for the 3-D hero (the projection audit) ---------------------
+
+
+def test_captured_fraction_is_one_when_the_axes_span_the_movement():
+    """Sanity anchor: if all the movement lies in the plotted subspace, nothing is hidden."""
+    rng = np.random.default_rng(3)
+    comps = np.eye(3, 8)                       # plot the first 3 of 8 dims
+    centered = np.zeros((50, 8))
+    centered[:, :3] = rng.standard_normal((50, 3))
+    assert _captured_fraction(centered, comps) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_captured_fraction_falls_when_movement_hides_off_axis():
+    """The number must *drop* when the departure travels in unplotted directions —
+    otherwise it would reassure the viewer exactly when it should warn them."""
+    rng = np.random.default_rng(4)
+    comps = np.eye(3, 8)
+    centered = rng.standard_normal((200, 8))   # isotropic: 3 of 8 dims ⇒ ~sqrt(3/8)
+    frac = _captured_fraction(centered, comps)
+    assert 0.4 < frac < 0.8
+    assert frac < 1.0
+
+
+def test_whiten_fit_makes_the_calm_cloud_isotropic():
+    """The whitened basis must actually whiten — unit covariance on the cloud it was fit to."""
+    rng = np.random.default_rng(5)
+    a = rng.standard_normal((400, 5)) @ np.diag([5.0, 3.0, 1.0, 0.4, 0.1])
+    mu, w = _whiten_fit(a)
+    cov = np.cov(((a - mu) @ w).T)
+    assert np.allclose(cov, np.eye(5), atol=0.15)
+
+
+def test_export_reports_basis_and_captured_fraction(artifacts):
+    """Both honesty fields ride in the block, so the panel can state them (#60 addendum)."""
+    ckpt, csv = artifacts
+    block = export_world_model(ckpt, csv, "infantA", 20, 80, 25)
+    assert block["pca"]["basis"] in ("raw", "whitened")
+    assert 0.0 < block["pca"]["novelty_captured"] <= 1.0
+    # the caption must disclose the selected-window caveat, not just the axes
+    assert "selected example" in block["caption"]
+
+
+# --- rank-deficient basis: the bug the recorder integration exposed ---------------
+
+
+def test_pca_fit_always_returns_three_orthonormal_axes_even_from_two_points():
+    """Two samples span a line, so the plain top-3 SVD returns a (2, D) basis — and every
+    downstream ``pca3`` silently becomes a 2-tuple, which the trace contract declares as a
+    3-tuple and the 3-D hero reads as ``undefined`` on z. Shape must survive rank deficiency.
+    """
+    rng = np.random.default_rng(11)
+    emb = rng.standard_normal((2, 12))
+    mu, comps, var = _pca_fit(emb)
+    assert comps.shape == (3, 12)
+    assert len(var) == 3
+    assert np.allclose(comps @ comps.T, np.eye(3), atol=1e-6)  # genuinely orthonormal
+    # the padded axes carry no variance, and say so rather than faking a number
+    assert var[0] > 0 and var[2] == pytest.approx(0.0, abs=1e-12)
+    assert _project(emb, mu, comps).shape == (2, 3)
+
+
+def test_pca_fit_single_point_still_yields_a_usable_basis():
+    """The degenerate limit: one sample has no direction at all."""
+    _, comps, var = _pca_fit(np.zeros((1, 9)))
+    assert comps.shape == (3, 9)
+    assert np.allclose(comps @ comps.T, np.eye(3), atol=1e-6)
+    assert list(var) == pytest.approx([0.0, 0.0, 0.0], abs=1e-12)
+
+
+def test_export_falls_back_to_calm_cloud_when_the_window_barely_opens_calm(artifacts):
+    """A recorded window need not open calm — the recorder's own does so for 2 windows.
+
+    Fitting 3 axes on 2 points is meaningless, so the basis falls back to the infant's whole
+    calm baseline. That is still label-free and still never the departure; the block records
+    which was used so the panel can say it.
+    """
+    ckpt, csv = artifacts
+    tiny = export_world_model(ckpt, csv, "infantA", 20, 80, normal_len=2)
+    assert tiny["pca"]["fitted_on"] == "calm_cloud"
+    assert "calm baseline" in tiny["caption"]
+
+    ample = export_world_model(ckpt, csv, "infantA", 20, 80, normal_len=40)
+    assert ample["pca"]["fitted_on"] == "normal"
+    assert "normal phase only" in ample["caption"]
+    assert MIN_BASIS_POINTS <= 40
+
+
+def test_caption_keeps_every_disclosure_on_both_basis_branches(artifacts):
+    """A caption that drops its caveats on one code path is worse than no caption."""
+    ckpt, csv = artifacts
+    for normal_len in (2, 40):
+        cap = export_world_model(ckpt, csv, "infantA", 20, 80, normal_len)["caption"]
+        assert "% of the departure" in cap
+        assert "selected example window" in cap
+        assert "no accuracy score" in cap
+
+
+def test_every_exported_point_is_three_dimensional(artifacts):
+    """The contract the 3-D hero indexes into, pinned end-to-end."""
+    ckpt, csv = artifacts
+    block = export_world_model(ckpt, csv, "infantA", 20, 80, normal_len=2)
+    assert all(len(p["pca3"]) == 3 for p in block["trajectory"])
+    assert all(len(p) == 3 for p in block["normal_cloud"])
+    assert len(block["pca"]["variance_explained"]) == 3

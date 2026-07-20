@@ -141,11 +141,36 @@ def test_cascade_verdict_unchanged_by_jepa_tier(floor_level, soft):
         for vec in stream:
             sink.append(cascade.assess(_ctx(vec)))
     for vw, vo in zip(verdicts_with, verdicts_without):
-        assert vw.level is vo.level
-        assert vw.safety_floor is vo.safety_floor
+        # EVERY clinician-facing field, not just the level. The level is the easy half: the
+        # tier pins itself GREEN. The headline is the hard half — it is chosen by
+        # ``max(assessments, key=(level, risk))``, so on a calm window a GREEN watcher ties on
+        # level and wins on risk, capturing risk/confidence/rationale/action/indicators/
+        # citations while leaving the level untouched. Asserting only ``level`` passes straight
+        # through that bug; this comparison is what actually pins "observational".
+        assert vw.model_dump(exclude={"assessments"}) == vo.model_dump(exclude={"assessments"})
         assert "jepa_surprise" not in vw.escalated_by
     # …but the observational assessment rides in the verdict for the trace/demo.
     assert any(a.source == "jepa_surprise" for a in verdicts_with[-1].assessments)
+
+
+def test_jepa_tier_never_captures_the_headline_when_its_risk_is_highest(assessor):
+    """The regression that ``level``-only assertions miss (#59).
+
+    Drive the watcher's risk above the floor tier's, on a GREEN window where every tier ties
+    on level, and demand the Verdict still speak with the deterministic tier's voice.
+    """
+    floor = _FakeFloor(ConcernLevel.GREEN)  # risk=0.5, rationale="fake floor"
+    cascade = VerdictCascade(tiers=[floor, assessor])
+    # Warm the buffer + calibration window, then hit it with a regime shift to spike surprise.
+    for vec in _calm_stream(40, seed=11):
+        cascade.assess(_ctx(vec))
+    verdicts = [cascade.assess(_ctx(v)) for v in _calm_stream(12, seed=12) + 6.0]
+    jepa_risks = [
+        a.risk for v in verdicts for a in v.assessments if a.source == "jepa_surprise"
+    ]
+    assert max(jepa_risks) > 0.5, "regime shift did not lift surprise above the floor tier's risk"
+    for v in verdicts:
+        assert v.risk == 0.5 and v.rationale == "fake floor" and v.confidence == 1.0
 
 
 # --- the signal is real ----------------------------------------------------------

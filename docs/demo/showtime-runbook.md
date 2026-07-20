@@ -91,8 +91,8 @@ Then take questions **in free-scrub** — grab any window and talk to it.
 **Real (defensible, held-out, in-repo):**
 - The **JEPA world model** — trained self-supervised, no labels, no collapse (`models/jepa/jepa.pt`).
   The **3-D trajectory, novelty, and surprise on screen are its actual outputs** on infant7's real
-  recorded window `[1240,1419]` (`scripts/export_jepa_trace.py`).
-- The honest numbers, if asked: onset-anticipation surprise **AUC 0.758**, embedding novelty
+  recorded window `[2740,2919]` (`scripts/export_jepa_trace.py`).
+- The honest numbers, if asked: onset-anticipation surprise **AUC 0.772**, embedding novelty
   **0.678 vs a linear VAR baseline 0.527**, held out across 10 infants (`docs/research/world-model-jepa-result.md`).
 - The **cascade logic** — Tier 1 direction-aware deviation floor, Tier 2 CUSUM, the two-level
   Safety Floor + quiet gates, Tier 3 escalate-only/short-circuit — is the real production code.
@@ -112,11 +112,26 @@ Then take questions **in free-scrub** — grab any window and talk to it.
 - The 3-D caption says exactly what the axes are (principal components of the JEPA embedding) and
   carries **no accuracy number**.
 
-**If asked "why not just say sepsis?"** → *"Because this dataset has no sepsis labels — it's the
-PICS cardiorespiratory cohort, annotated for bradycardia. We validate on the physiological
-departure, which is real and held-out, and we're honest that sepsis is the clinical hypothesis a
-clinician weighs, not something we've confirmed. Validating on a labelled sepsis cohort is the
-next step."*
+**If asked "why not just say sepsis?"** — lead with the precedent, not the apology:
+
+> *"Because the FDA-cleared device in this space doesn't either. HeRO watches heart-rate
+> characteristics and shows a risk score; the clinician decides about sepsis. That design cut
+> mortality from 10.2% to 8.1% in a randomised trial of 2,989 very-low-birth-weight infants, and
+> 30-day mortality after late-onset sepsis from 19.6% to 11.8%. Surfacing a physiological risk
+> marker and leaving the diagnosis to a clinician isn't our limitation — it's the pattern with
+> the evidence behind it. What we detect is departure from this infant's own autonomic baseline,
+> held out at 0.77. Sepsis is the hypothesis that departure raises."*
+
+**If pushed — "but you have no sepsis labels":** *"Correct, and neither does any public dataset.
+We surveyed them (`docs/research/public-neonatal-datasets-survey.md`): the groups holding
+beat-to-beat neonatal ECG with adjudicated infection outcomes have never deposited it, and
+Pre-Vent — the NHLBI study built to close that gap, 730 infants under 29 weeks — kept its
+waveforms at the sites and released only daily event counts. A labelled cohort under a data
+agreement is the next step; on public data, this is the state of the art."*
+
+**Do not say** "we predict sepsis", "validated for clinical use", or "would have saved N babies".
+The first is unverifiable on this data, the second is untrue at 10 infants with no calibrated
+operating point, and the third has no outcome data behind it at all.
 
 ---
 

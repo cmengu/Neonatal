@@ -14,28 +14,65 @@ CUSUM. That keeps the drift accumulator correct while still letting the LLM tier
 """
 from __future__ import annotations
 
+import logging
+
 from src.assessment.cascade import VerdictCascade
 from src.assessment.context import load_context, personal_baseline
 from src.assessment.cusum import SqliteCusumStore, TemporalAssessor
 from src.assessment.deviation import DeviationAssessor
+from src.assessment.jepa_surprise import JepaSurpriseAssessor
 from src.assessment.rag import RagVerdictAssessor
 from src.assessment.types import AssessmentContext, Verdict
 
+logger = logging.getLogger(__name__)
 
-def default_cascade(cusum_store=None, rag_graph=None) -> VerdictCascade:
-    """The production cascade: deterministic floor + CUSUM drift + RAG (escalate-only).
+
+def default_cascade(cusum_store=None, rag_graph=None, jepa=None) -> VerdictCascade:
+    """The production cascade: deterministic floor + CUSUM drift + RAG (escalate-only),
+    plus the **observational** JEPA world-model tier (#59).
 
     ``cusum_store`` defaults to the persisted ``SqliteCusumStore`` (``data/audit.db``) so
     drift survives restarts; inject ``InMemoryCusumStore`` / a fake for tests. ``rag_graph``
-    is passed through to the RAG tier so tests can inject a fake graph (no Groq/Qdrant).
+    is passed through to the RAG tier so tests can inject a fake graph (no Anthropic/Qdrant).
+
+    **Why the world model ships observational, not voting.** Its onset-anticipation AUC of
+    0.772 is held-out and label-free, but it is a 10-infant result with no calibrated alarm
+    operating point — and the PICS stream carries no sepsis labels at all, so "departure from
+    this infant's learned normal" is the only thing it has ever been scored on. That earns it a
+    seat in every Verdict's ``assessments`` (the trace, the demo, and any future calibration
+    study now see its Surprise on every window) and nothing more. The ``Observational``
+    capability makes that structural: the cascade excludes it from the floor, the composed
+    level, ``escalated_by`` and the headline, so wiring it in here cannot change a single
+    clinician-facing field.
+
+    **Degradation.** A missing or unreadable checkpoint omits the tier with a warning rather
+    than failing the assessment: a watcher that contributes nothing to the verdict by
+    construction must never be able to take the safety-critical path down with it. Pass
+    ``jepa`` to inject a model (tests) or a pre-built assessor.
     """
-    return VerdictCascade(
-        [
-            DeviationAssessor(),
-            TemporalAssessor(store=cusum_store or SqliteCusumStore()),
-            RagVerdictAssessor(graph=rag_graph),
-        ]
-    )
+    tiers = [
+        DeviationAssessor(),
+        TemporalAssessor(store=cusum_store or SqliteCusumStore()),
+    ]
+    observer = jepa if jepa is not None else _load_jepa_tier()
+    if observer is not None:
+        tiers.append(observer)
+    tiers.append(RagVerdictAssessor(graph=rag_graph))
+    return VerdictCascade(tiers)
+
+
+def _load_jepa_tier() -> JepaSurpriseAssessor | None:
+    """Build the observational world-model tier, or ``None`` if its checkpoint is unusable."""
+    try:
+        return JepaSurpriseAssessor()
+    except Exception as exc:  # missing / corrupt / shape-mismatched checkpoint
+        logger.warning(
+            "JEPA observational tier unavailable (%s: %s) — the cascade runs without it; "
+            "verdicts are unaffected because the tier never votes.",
+            type(exc).__name__,
+            exc,
+        )
+        return None
 
 
 def assess_patient(patient_id: str, cascade: VerdictCascade | None = None) -> Verdict:

@@ -9,7 +9,7 @@ scorecard in ``docs/research/world-model-jepa-result.md``) enters the cascade se
   the only quiet in the cascade stays Tier 2's *deterministic* CUSUM quiet);
 - ``soft_floor`` is always ``False`` — it is not a floor tier.
 
-Why observational: the scorecard's numbers (onset-anticipation AUC 0.758, held-out,
+Why observational: the scorecard's numbers (onset-anticipation AUC 0.772, held-out,
 label-free) make the signal *promising*, but they are a 10-infant result with no
 calibrated alarm operating point — exactly the situation where a learned model has
 earned a seat at the table (its Surprise rides in every Verdict's ``assessments`` for
@@ -92,6 +92,11 @@ class JepaSurpriseAssessor:
     """
 
     source = "jepa_surprise"
+    #: Renounces the vote (``Observational``): the cascade keeps this tier's Assessment in the
+    #: trace but excludes it from the floor, the level, ``escalated_by`` and the headline. The
+    #: GREEN / ``may_quiet=False`` discipline below keeps it out of the *level*; this keeps it
+    #: out of the *rationale* a clinician reads, which the level alone does not.
+    observational = True
 
     def __init__(
         self,

@@ -10,8 +10,10 @@
 
 import { Trace, WorldModel } from "./trace-types";
 // Real JEPA world-model block (#60), exported by scripts/export_jepa_trace.py from the
-// trained checkpoint on infant7 [1240,1419]. The one part of this fixture that is NOT
+// trained checkpoint on infant7 [2740,2919]. The one part of this fixture that is NOT
 // synthesised — real embeddings, real novelty/surprise, on the shared grid.
+// Window re-selected after the #18 data fix: the previous [1240,1419] was picked on the
+// pre-fix stream and no longer opens calm there (drift 1.56 -> 0.41 calm-SD).
 import worldModelInfant7 from "./world-model-infant7.json";
 
 const N = 180;

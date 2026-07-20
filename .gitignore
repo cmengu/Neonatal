@@ -10,6 +10,12 @@ __pycache__/
 venv/
 env/
 
+# Secrets — .env holds real API keys and must never be committed.
+# NOTE: `env/` above matches a *directory*; it does NOT match the file `.env`.
+.env
+.env.*
+!.env.example
+
 # Jupyter
 .ipynb_checkpoints/
 
@@ -31,3 +37,8 @@ models/jepa/sweep/*.pt
 
 # Playwright raw capture scratch (final video lives at docs/demo/showtime-demo.*)
 docs/demo/.raw/
+
+# Staged feature regeneration output (scripts/regenerate_hrv_features.py).
+# Large derived CSVs — regenerate rather than commit. Promote deliberately with
+# --promote once the downstream JEPA retrain (#75) is ready to follow.
+data/processed/staging/

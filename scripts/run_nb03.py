@@ -54,12 +54,12 @@ def extract_features(patient_id):
 
     while start + WINDOW_SIZE <= len(rr_ms):
         window = rr_ms[start : start + WINDOW_SIZE]
-        # Trailing long window for SampEn, ending at this HRV window's last beat.
+        # Trailing long window for both HeRO discriminators, ending at this window's last beat.
         end = start + WINDOW_SIZE
-        entropy_window = rr_ms[max(0, end - SAMPEN_WINDOW) : end]
-        if len(entropy_window) < SAMPEN_MIN_N:
-            entropy_window = np.array([])  # cold-start → sampen NaN
-        row = get_window_features(window, patient_id, win_idx, rr_entropy=entropy_window)
+        long_window = rr_ms[max(0, end - SAMPEN_WINDOW) : end]
+        if len(long_window) < SAMPEN_MIN_N:
+            long_window = np.array([])  # cold-start → both discriminators NaN
+        row = get_window_features(window, patient_id, win_idx, rr_long=long_window)
         rows.append(row)
         start += STEP_SIZE
         win_idx += 1
