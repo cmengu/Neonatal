@@ -8,3 +8,23 @@ body {
   background-color: rgb(15 23 42); /* slate-900 */
   color: rgb(241 245 249); /* slate-100 */
 }
+
+/* ---- Clinical-noir · showtime immersive (#61) ---- */
+.glass {
+  background: rgba(14, 20, 32, 0.72);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.noir-grid {
+  background-image:
+    linear-gradient(rgba(56, 189, 248, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(56, 189, 248, 0.06) 1px, transparent 1px);
+  background-size: 34px 34px;
+}
+.noir-vignette {
+  background: radial-gradient(120% 90% at 55% 42%, transparent 42%, rgba(0, 0, 0, 0.6) 100%);
+}
+@keyframes noir-float-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}

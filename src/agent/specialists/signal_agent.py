@@ -75,7 +75,7 @@ def _lora_signal_inference(r) -> "SignalAssessment":
 
     Parameters
     ----------
-    r : PipelineResult — used for z-score input and rule-based fallback.
+    r : AssessmentView — used for z-score input and rule-based fallback.
     """
     import json
     import torch
@@ -90,8 +90,8 @@ def _lora_signal_inference(r) -> "SignalAssessment":
     )
     input_text = (
         f"{z_parts}. "
-        f"Risk score {r.risk_score:.2f}. "
-        f"Bradycardia events: {len(r.detected_events)}."
+        f"Deterministic risk {r.risk:.2f}. "
+        f"Bradycardia events: {r.n_events}."
     )
     prompt = (
         f"### Instruction:\n{instruction}\n\n"
@@ -128,29 +128,34 @@ def _lora_signal_inference(r) -> "SignalAssessment":
         # Fallback: rule-based rather than crashing the pipeline.
         z_vals = [abs(z) for z in r.z_scores.values()]
         max_z  = max(z_vals) if z_vals else 0.0
-        return _rule_based_signal(r.risk_score, max_z)
+        return _rule_based_signal(r.level, max_z)
 
 
-def _rule_based_signal(risk_score: float, max_z: float) -> SignalAssessment:
-    """Deterministic signal assessment for EVAL_NO_LLM mode."""
-    if risk_score > 0.70:
+def _rule_based_signal(level: str, max_z: float) -> SignalAssessment:
+    """Deterministic signal assessment for EVAL_NO_LLM mode.
+
+    Post-#7 this routes on the deterministic Tier-1 concern ``level`` (the retired ONNX
+    ``risk_score`` bands are gone), mapping RED→abnormal_hrc, YELLOW→indeterminate,
+    GREEN→normal_variation.
+    """
+    if level == "RED":
         return SignalAssessment(
             autonomic_pattern="abnormal_hrc",
             primary_features=["rmssd", "sdnn"],
             confidence=0.90,
             physiological_reasoning=(
-                f"Rule-based: risk_score={risk_score:.2f} > 0.70, max_z={max_z:.1f}. "
+                f"Rule-based: Tier-1 level=RED, max_z={max_z:.1f}. "
                 "Autonomic withdrawal pattern — abnormal heart-rate characteristics "
                 "(increased risk); an adjunct risk signal, not a sepsis diagnosis."
             ),
         )
-    if risk_score > 0.40:
+    if level == "YELLOW":
         return SignalAssessment(
             autonomic_pattern="indeterminate",
             primary_features=["rmssd"],
             confidence=0.65,
             physiological_reasoning=(
-                f"Rule-based: risk_score={risk_score:.2f} in borderline range, max_z={max_z:.1f}. "
+                f"Rule-based: Tier-1 level=YELLOW (borderline), max_z={max_z:.1f}. "
                 "Pattern indeterminate — clinical context required."
             ),
         )
@@ -159,7 +164,7 @@ def _rule_based_signal(risk_score: float, max_z: float) -> SignalAssessment:
         primary_features=["sdnn"],
         confidence=0.85,
         physiological_reasoning=(
-            f"Rule-based: risk_score={risk_score:.2f} < 0.40, max_z={max_z:.1f}. "
+            f"Rule-based: Tier-1 level=GREEN, max_z={max_z:.1f}. "
             "HRV deviations within expected normal variation range."
         ),
     )
@@ -173,7 +178,7 @@ def signal_agent_node(state: dict) -> dict:
     max_z = max(z_vals) if z_vals else 0.0
 
     if os.getenv("EVAL_NO_LLM", "").lower() in {"1", "true", "yes"}:
-        return {"signal_assessment": _rule_based_signal(r.risk_score, max_z)}
+        return {"signal_assessment": _rule_based_signal(r.level, max_z)}
 
     # USE_LORA_SIGNAL: route to local Phi-3-mini LoRA adapter (no Groq call).
     # Priority: EVAL_NO_LLM (CI, rule-based) > USE_LORA_SIGNAL (LoRA) > default (Groq).
@@ -186,7 +191,7 @@ def signal_agent_node(state: dict) -> dict:
     query = (
         f"Neonatal HRV autonomic pattern: "
         + ", ".join(f"{d.name} z={d.z_score:+.1f}" for d in top3)
-        + f". Risk score {r.risk_score:.2f}. Bradycardia events: {len(r.detected_events)}."
+        + f". Deterministic risk {r.risk:.2f}. Bradycardia events: {r.n_events}."
     )
     chunks = _get_kb().query_by_category(query, categories=_SIGNAL_CATEGORIES, n=3)
     context = "\n\n".join(chunks)

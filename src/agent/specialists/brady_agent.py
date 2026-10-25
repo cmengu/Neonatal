@@ -56,7 +56,7 @@ def _rule_based_brady(n_events: int) -> BradycardiaAssessment:
 def brady_agent_node(state: dict) -> dict:
     """Classify bradycardia event pattern. Runs only when events present or max_z > 2.0."""
     r = state["pipeline_result"]
-    n_events = len(r.detected_events)
+    n_events = r.n_events
 
     if os.getenv("EVAL_NO_LLM", "").lower() in {"1", "true", "yes"}:
         return {"bradycardia_assessment": _rule_based_brady(n_events)}
@@ -73,7 +73,7 @@ def brady_agent_node(state: dict) -> dict:
 
     query = (
         f"Bradycardia events: {n_events} in last 6h. "
-        f"Risk score {r.risk_score:.2f}. "
+        f"Deterministic risk {r.risk:.2f}. "
         + ", ".join(
             f"{d.name} z={d.z_score:+.1f}"
             for d in r.get_top_deviated(3)

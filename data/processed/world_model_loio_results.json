@@ -8,96 +8,96 @@
     "rr_ms_max_dev",
     "rr_ms_75%_dev"
   ],
-  "pooled_auc": 0.5148532832286558,
-  "mean_infant_auc": 0.5009318747689289,
-  "median_infant_auc": 0.4985427282034321,
+  "pooled_auc": 0.6348653466819932,
+  "mean_infant_auc": 0.6143181746651527,
+  "median_infant_auc": 0.6169349446181978,
   "n_infants": 10,
-  "total_events": 595,
-  "total_lead_windows": 2975,
-  "total_baseline_windows": 110308,
+  "total_events": 621,
+  "total_lead_windows": 3105,
+  "total_baseline_windows": 115157,
   "lead_time_windows_median": 1.0,
-  "lead_time_seconds_median": 10.7,
-  "n_events_with_lead_rise": 5,
+  "lead_time_seconds_median": 10.05,
+  "n_events_with_lead_rise": 322,
   "per_infant": [
     {
       "patient_id": "infant1",
-      "auc": 0.5098184687074478,
+      "auc": 0.6373512670191637,
       "n_events": 77,
       "n_lead": 385,
-      "n_baseline": 12313,
+      "n_baseline": 12195,
       "seconds_per_window": 9.7
     },
     {
       "patient_id": "infant2",
-      "auc": 0.5012010533380019,
-      "n_events": 63,
-      "n_lead": 315,
-      "n_baseline": 8704,
-      "seconds_per_window": 11.6
+      "auc": 0.611327439518813,
+      "n_events": 72,
+      "n_lead": 360,
+      "n_baseline": 9181,
+      "seconds_per_window": 11.55
     },
     {
       "patient_id": "infant3",
-      "auc": 0.518098964281752,
-      "n_events": 73,
-      "n_lead": 365,
-      "n_baseline": 8396,
-      "seconds_per_window": 11.65
+      "auc": 0.6104885716810274,
+      "n_events": 79,
+      "n_lead": 395,
+      "n_baseline": 8882,
+      "seconds_per_window": 11.6
     },
     {
       "patient_id": "infant4",
-      "auc": 0.5230996474535955,
-      "n_events": 65,
-      "n_lead": 325,
-      "n_baseline": 14488,
+      "auc": 0.5672467662184361,
+      "n_events": 66,
+      "n_lead": 330,
+      "n_baseline": 14684,
       "seconds_per_window": 9.05
     },
     {
       "patient_id": "infant5",
-      "auc": 0.4949291319882984,
+      "auc": 0.6219627844055855,
       "n_events": 72,
       "n_lead": 360,
-      "n_baseline": 10293,
-      "seconds_per_window": 10.7
+      "n_baseline": 12238,
+      "seconds_per_window": 10.6
     },
     {
       "patient_id": "infant6",
-      "auc": 0.5337629811555313,
-      "n_events": 54,
-      "n_lead": 270,
-      "n_baseline": 12215,
-      "seconds_per_window": 11.05
+      "auc": 0.6153223402059491,
+      "n_events": 56,
+      "n_lead": 280,
+      "n_baseline": 12458,
+      "seconds_per_window": 11.0
     },
     {
       "patient_id": "infant7",
-      "auc": 0.4958844030688623,
-      "n_events": 32,
-      "n_lead": 160,
-      "n_baseline": 5344,
-      "seconds_per_window": 9.45
+      "auc": 0.6088879421401255,
+      "n_events": 34,
+      "n_lead": 170,
+      "n_baseline": 5799,
+      "seconds_per_window": 9.35
     },
     {
       "patient_id": "infant8",
-      "auc": 0.489421503034075,
-      "n_events": 25,
-      "n_lead": 125,
-      "n_baseline": 6427,
+      "auc": 0.6185475490304464,
+      "n_events": 28,
+      "n_lead": 140,
+      "n_baseline": 6461,
       "seconds_per_window": 10.75
     },
     {
       "patient_id": "infant9",
-      "auc": 0.47463485410285344,
-      "n_events": 95,
-      "n_lead": 475,
-      "n_baseline": 18609,
+      "auc": 0.6208511323041934,
+      "n_events": 97,
+      "n_lead": 485,
+      "n_baseline": 19220,
       "seconds_per_window": 10.05
     },
     {
       "patient_id": "infant10",
-      "auc": 0.4684677405588716,
-      "n_events": 39,
-      "n_lead": 195,
-      "n_baseline": 13519,
-      "seconds_per_window": 9.8
+      "auc": 0.6311959541277868,
+      "n_events": 40,
+      "n_lead": 200,
+      "n_baseline": 14039,
+      "seconds_per_window": 9.75
     }
   ]
 }

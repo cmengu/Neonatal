@@ -15,16 +15,26 @@ class FakeAssessor:
     Exposes ``source`` on the object too (not just in the Assessment), so the cascade
     can identify a ``"rag"`` tier structurally and skip it without invoking. ``called``
     records whether ``assess`` ran — used to prove the Tier 3 short-circuit.
+
+    ``quiets_soft_floor`` gives the fake the ``SoftFloorArbiter`` capability (#27): the cascade
+    honours a ``may_quiet`` grant only from a tier that structurally holds it, so a test that
+    wants to grant a quiet must declare the authority — exactly as a real Tier 2 does.
     """
 
     def __init__(self, level: ConcernLevel, source: str, risk: float = 0.5,
-                 soft_floor: bool = False, may_quiet: bool = False):
+                 soft_floor: bool = False, may_quiet: bool = False,
+                 quiets_soft_floor: bool = False,
+                 recommended_action=None, primary_indicators=(), citations=()):
         self.source = source
+        self.quiets_soft_floor = quiets_soft_floor
         self.called = False
         self._a = Assessment(
             level=level, risk=risk, confidence=0.9,
             rationale="fake assessment for testing purposes", source=source,
             soft_floor=soft_floor, may_quiet=may_quiet,
+            recommended_action=recommended_action,
+            primary_indicators=list(primary_indicators),
+            citations=list(citations),
         )
 
     def assess(self, context: AssessmentContext) -> Assessment:
@@ -33,7 +43,7 @@ class FakeAssessor:
 
 
 def _ctx() -> AssessmentContext:
-    return AssessmentContext(patient_id="t", z_scores={"rmssd": -2.0}, hrv_values={}, detected_events=0)
+    return AssessmentContext(patient_id="t", z_scores={"rmssd": -2.0}, hrv_values={})
 
 
 def test_single_tier_verdict_equals_that_tier():
@@ -64,6 +74,36 @@ def test_verdict_carries_the_assessment_trail():
     assert len(v.assessments) == 1
     assert v.assessments[0].source == "deviation"
     assert v.safety_floor == ConcernLevel.RED
+
+
+def test_verdict_lifts_headline_action_indicators_and_citations():
+    # #23: a caller reading only the Verdict recovers the traceable detail without bypassing
+    # the cascade. The headline (most severe) tier here is the escalating rag tier.
+    c = VerdictCascade(tiers=[
+        FakeAssessor(ConcernLevel.YELLOW, "deviation", primary_indicators=("rmssd",)),
+        FakeAssessor(
+            ConcernLevel.RED, "rag", risk=0.9,
+            recommended_action="Immediate clinical review",
+            primary_indicators=("sampen", "sample_asymmetry"),
+            citations=("NICE NG195", "AAP/COFN preterm"),
+        ),
+    ])
+    v = c.assess(_ctx())
+    assert v.level == ConcernLevel.RED
+    assert v.recommended_action == "Immediate clinical review"
+    assert v.primary_indicators == ["sampen", "sample_asymmetry"]
+    assert v.citations == ["NICE NG195", "AAP/COFN preterm"]
+
+
+def test_tier1_only_verdict_still_carries_deviation_indicators():
+    # The production cascade is Tier-1-only today; its Verdict must still surface indicators.
+    c = VerdictCascade(tiers=[
+        FakeAssessor(ConcernLevel.YELLOW, "deviation", primary_indicators=("rmssd",)),
+    ])
+    v = c.assess(_ctx())
+    assert v.primary_indicators == ["rmssd"]
+    assert v.recommended_action is None
+    assert v.citations == []
 
 
 def test_cascade_runs_with_only_fakes_no_external_deps():
@@ -194,7 +234,7 @@ def test_soft_yellow_quieted_to_green_when_tier2_grants():
     # A single-feature YELLOW SOFT floor + a gated Tier 2 that grants the quiet → GREEN.
     c = VerdictCascade(tiers=[
         FakeAssessor(ConcernLevel.YELLOW, "deviation", soft_floor=True),
-        FakeAssessor(ConcernLevel.GREEN, "temporal", may_quiet=True),
+        FakeAssessor(ConcernLevel.GREEN, "temporal", may_quiet=True, quiets_soft_floor=True),
     ])
     v = c.assess(_ctx())
     assert v.level == ConcernLevel.GREEN
@@ -210,11 +250,49 @@ def test_soft_yellow_stands_without_a_gated_quiet():
     assert c.assess(_ctx()).level == ConcernLevel.YELLOW
 
 
+def test_rogue_tier_may_quiet_is_ignored_without_the_arbiter_capability():
+    """#27 — structural quieting authority. A tier that sets ``may_quiet=True`` but does NOT
+    hold the ``SoftFloorArbiter`` capability cannot quiet the SOFT floor. This is the invariant
+    that used to live only in a docstring: a future RAG (or any non-Tier-2 tier) that sets the
+    bool is ignored, so it can never silently talk the floor down."""
+    # A rogue tier claiming a quiet the way a mis-built RAG might — the bool is set, the
+    # capability is not. The SOFT-YELLOW floor must stand.
+    rogue = FakeAssessor(ConcernLevel.GREEN, "other", may_quiet=True)  # quiets_soft_floor=False
+    assert rogue.quiets_soft_floor is False
+    c = VerdictCascade(tiers=[
+        FakeAssessor(ConcernLevel.YELLOW, "deviation", soft_floor=True),
+        rogue,
+    ])
+    assert c.assess(_ctx()).level == ConcernLevel.YELLOW
+
+    # And the *same* window quiets correctly once a tier with the capability grants it —
+    # proving it is the capability, not the level/source, that gates the quiet.
+    c2 = VerdictCascade(tiers=[
+        FakeAssessor(ConcernLevel.YELLOW, "deviation", soft_floor=True),
+        FakeAssessor(ConcernLevel.GREEN, "temporal", may_quiet=True, quiets_soft_floor=True),
+    ])
+    assert c2.assess(_ctx()).level == ConcernLevel.GREEN
+
+
+def test_real_temporal_assessor_holds_the_arbiter_capability():
+    """The production Tier 2 is the one tier that structurally may quiet — the RAG tier and the
+    Tier 1 floor do not, so the ADR-0003 authority is a real type property, not configuration."""
+    from src.assessment.assessor import SoftFloorArbiter
+    from src.assessment.cusum import TemporalAssessor
+    from src.assessment.deviation import DeviationAssessor
+    from src.assessment.rag import RagVerdictAssessor
+
+    assert isinstance(TemporalAssessor(), SoftFloorArbiter)
+    assert TemporalAssessor().quiets_soft_floor is True
+    assert not VerdictCascade._can_quiet_soft_floor(DeviationAssessor())
+    assert not VerdictCascade._can_quiet_soft_floor(RagVerdictAssessor(graph=object()))
+
+
 def test_hard_red_is_never_quieted_even_with_a_grant():
     # RED is the HARD floor — un-quietable regardless of any quiet grant.
     c = VerdictCascade(tiers=[
         FakeAssessor(ConcernLevel.RED, "deviation"),  # not soft
-        FakeAssessor(ConcernLevel.GREEN, "temporal", may_quiet=True),
+        FakeAssessor(ConcernLevel.GREEN, "temporal", may_quiet=True, quiets_soft_floor=True),
     ])
     assert c.assess(_ctx()).level == ConcernLevel.RED
 
@@ -225,7 +303,7 @@ def test_hard_floor_never_lowered_by_a_quiet_grant_property():
     for lvl in (ConcernLevel.GREEN, ConcernLevel.YELLOW, ConcernLevel.RED):
         c = VerdictCascade(tiers=[
             FakeAssessor(lvl, "deviation"),  # HARD (not soft)
-            FakeAssessor(ConcernLevel.GREEN, "temporal", may_quiet=True),
+            FakeAssessor(ConcernLevel.GREEN, "temporal", may_quiet=True, quiets_soft_floor=True),
         ])
         assert c.assess(_ctx()).level >= lvl
 
@@ -235,7 +313,7 @@ def test_quieted_soft_floor_also_short_circuits_tier3():
     rag = FakeAssessor(ConcernLevel.RED, "rag")
     c = VerdictCascade(tiers=[
         FakeAssessor(ConcernLevel.YELLOW, "deviation", soft_floor=True),
-        FakeAssessor(ConcernLevel.GREEN, "temporal", may_quiet=True),
+        FakeAssessor(ConcernLevel.GREEN, "temporal", may_quiet=True, quiets_soft_floor=True),
         rag,
     ])
     v = c.assess(_ctx())

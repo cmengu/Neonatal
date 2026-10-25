@@ -1,0 +1,63 @@
+name: CI
+
+# Gates the code the eval workflow doesn't touch: the hermetic assessment + world-model
+# unit tests, and the showtime dashboard (typecheck + offline production build). eval.yml
+# keeps owning the agent F1/FNR gates + the dependency-API contract test.
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: Python unit tests (assessment + world model)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run hermetic unit suites
+        run: >
+          pytest -q
+          tests/test_deviation_assessor.py
+          tests/test_temporal_cusum.py
+          tests/test_verdict_cascade.py
+          tests/test_jepa_assessor.py
+          tests/test_jepa_score.py
+          tests/test_jepa_export.py
+          tests/test_jepa_model.py
+          tests/test_world_model_forecaster.py
+          tests/test_world_model_loio.py
+          tests/test_respiration_features.py
+
+  dashboard:
+    name: Dashboard typecheck + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - name: Install dependencies
+        working-directory: dashboard
+        run: npm ci
+      - name: Typecheck
+        working-directory: dashboard
+        run: npx tsc --noEmit
+      - name: Production build (offline)
+        working-directory: dashboard
+        run: npx next build

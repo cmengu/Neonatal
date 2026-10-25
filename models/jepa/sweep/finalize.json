@@ -1,0 +1,83 @@
+{
+  "h4_base": {
+    "anticipation": {
+      "novelty_pooled_auc": 0.646,
+      "novelty_median_infant_auc": 0.643,
+      "surprise_pooled_auc": 0.52,
+      "surprise_median_infant_auc": 0.522,
+      "total_onsets": 3563,
+      "lead": 5,
+      "guard": 30
+    },
+    "demo": {
+      "1240_1419": {
+        "sep_rise_calmSD": 0.94,
+        "peak_novelty": 1.99,
+        "cloud_edge_p95": 1.36,
+        "peak_over_edge": 1.47,
+        "surprise_rise_z": -0.17
+      },
+      "2098_2277": {
+        "sep_rise_calmSD": 1.45,
+        "peak_novelty": 1.89,
+        "cloud_edge_p95": 1.36,
+        "peak_over_edge": 1.4,
+        "surprise_rise_z": -0.13
+      }
+    }
+  },
+  "h16": {
+    "anticipation": {
+      "novelty_pooled_auc": 0.643,
+      "novelty_median_infant_auc": 0.65,
+      "surprise_pooled_auc": 0.673,
+      "surprise_median_infant_auc": 0.665,
+      "total_onsets": 3563,
+      "lead": 5,
+      "guard": 30
+    },
+    "demo": {
+      "1240_1419": {
+        "sep_rise_calmSD": 1.54,
+        "peak_novelty": 2.12,
+        "cloud_edge_p95": 1.38,
+        "peak_over_edge": 1.54,
+        "surprise_rise_z": -0.07
+      },
+      "2098_2277": {
+        "sep_rise_calmSD": 1.62,
+        "peak_novelty": 2.06,
+        "cloud_edge_p95": 1.38,
+        "peak_over_edge": 1.5,
+        "surprise_rise_z": 0.75
+      }
+    }
+  },
+  "h16_m50": {
+    "anticipation": {
+      "novelty_pooled_auc": 0.645,
+      "novelty_median_infant_auc": 0.648,
+      "surprise_pooled_auc": 0.758,
+      "surprise_median_infant_auc": 0.76,
+      "total_onsets": 3563,
+      "lead": 5,
+      "guard": 30
+    },
+    "demo": {
+      "1240_1419": {
+        "sep_rise_calmSD": 1.56,
+        "peak_novelty": 2.01,
+        "cloud_edge_p95": 1.33,
+        "peak_over_edge": 1.52,
+        "surprise_rise_z": 0.43
+      },
+      "2098_2277": {
+        "sep_rise_calmSD": 1.6,
+        "peak_novelty": 2.09,
+        "cloud_edge_p95": 1.33,
+        "peak_over_edge": 1.57,
+        "surprise_rise_z": 1.28
+      }
+    }
+  }
+}

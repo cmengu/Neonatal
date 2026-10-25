@@ -21,11 +21,19 @@ class FakeGraph:
         return {"final_alert": self._alert}
 
 
-def _alert(concern="YELLOW", risk=0.62, confidence=0.8, reasoning="reduced RMSSD vs baseline"):
+def _alert(
+    concern="YELLOW", risk=0.62, confidence=0.8, reasoning="reduced RMSSD vs baseline",
+    recommended_action="Increase monitoring frequency",
+    primary_indicators=("rmssd", "sdnn"),
+    retrieved_context=("NICE NG195 §1.7 — sepsis risk factors",),
+):
     # Mimics the fields RagVerdictAssessor reads off a NeonatalAlert.
     return SimpleNamespace(
-        concern_level=concern, risk_score=risk, confidence=confidence,
+        concern_level=concern, risk=risk, confidence=confidence,
         clinical_reasoning=reasoning,
+        recommended_action=recommended_action,
+        primary_indicators=list(primary_indicators),
+        retrieved_context=list(retrieved_context),
     )
 
 
@@ -39,10 +47,27 @@ def test_maps_neonatal_alert_to_assessment():
     assert a.source == "rag"
 
 
-def test_passes_patient_id_to_the_graph():
+def test_carries_action_indicators_and_citations_through_the_seam():
+    # #23: the seam must stop collapsing away the very fields the API bypassed it to recover.
+    graph = FakeGraph(_alert(
+        recommended_action="Blood culture and CBC with differential",
+        primary_indicators=("sampen", "sample_asymmetry"),
+        retrieved_context=("AAP/COFN preterm sepsis pathway", "HeRO HRC adjunct note"),
+    ))
+    a = RagVerdictAssessor(graph=graph).assess(AssessmentContext(patient_id="infant9"))
+    assert a.recommended_action == "Blood culture and CBC with differential"
+    assert a.primary_indicators == ["sampen", "sample_asymmetry"]
+    assert a.citations == ["AAP/COFN preterm sepsis pathway", "HeRO HRC adjunct note"]
+
+
+def test_threads_context_and_patient_id_into_the_graph():
+    # #24: the cascade's window is threaded in so Tier 3 assesses the *same* window as Tiers
+    # 1-2 (no second disk read); patient_id still rides along for logging / episodic lookups.
     graph = FakeGraph(_alert())
-    RagVerdictAssessor(graph=graph).assess(AssessmentContext(patient_id="infant7"))
-    assert graph.invoked_with == {"patient_id": "infant7"}
+    ctx = AssessmentContext(patient_id="infant7", z_scores={"rmssd": -2.1})
+    RagVerdictAssessor(graph=graph).assess(ctx)
+    assert graph.invoked_with["patient_id"] == "infant7"
+    assert graph.invoked_with["context"] is ctx
 
 
 def test_source_attribute_is_readable_without_invoking():

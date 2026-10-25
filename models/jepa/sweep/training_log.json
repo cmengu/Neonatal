@@ -1,0 +1,22 @@
+{
+  "steps_trained": 2800,
+  "final": {
+    "loss": 0.6231915354728699,
+    "loss_pred": 0.5847652554512024,
+    "loss_var": 0.0021498489659279585,
+    "loss_cov": 0.07040300220251083,
+    "embed_std": 1.01796555519104
+  },
+  "config": {
+    "embed_dim": 48,
+    "context_len": 24,
+    "horizon": 24,
+    "encoder_layers": 3,
+    "predictor_layers": 2,
+    "mask_ratio": 0.5,
+    "var_coef": 1.5,
+    "cov_coef": 0.5
+  },
+  "collapse_check": "healthy",
+  "wall_seconds": 584.8
+}

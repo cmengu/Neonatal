@@ -9,7 +9,7 @@ WHAT TO DO given already-interpreted evidence. It does not also have to interpre
 what the z-scores mean — that is signal_agent's job.
 
 Retrieves from 'intervention_thresholds' and 'baseline_interpretation' only.
-In EVAL_NO_LLM mode: deterministic LLMOutput from risk_score (same as generalist).
+In EVAL_NO_LLM mode: deterministic LLMOutput from the Tier-1 level (same as generalist).
 """
 from __future__ import annotations
 
@@ -66,9 +66,9 @@ def clinical_agent_node(state: dict) -> dict:
         )
 
     query = (
-        f"Intervention decision for neonatal {r.risk_level} risk patient. "
+        f"Intervention decision for neonatal {r.level} risk patient. "
         f"Autonomic pattern: {sa.autonomic_pattern if sa else 'unknown'}. "
-        f"Brady events: {len(r.detected_events)}. Risk score: {r.risk_score:.2f}."
+        f"Brady events: {r.n_events}. Deterministic risk: {r.risk:.2f}."
     )
     chunks = _get_kb().query_by_category(query, categories=_CLINICAL_CATEGORIES, n=3)
     context = "\n\n".join(chunks)
@@ -77,7 +77,7 @@ def clinical_agent_node(state: dict) -> dict:
 You receive pre-interpreted specialist findings — not raw numbers.
 Your task: determine the concern level and recommend an appropriate clinical action.
 
-ONNX risk score: {r.risk_score:.3f}
+Deterministic risk: {r.risk:.3f}
 {signal_summary}
 {brady_summary}
 {episodic}

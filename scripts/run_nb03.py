@@ -30,6 +30,14 @@ PROCESSED_DIR = REPO_ROOT / "data" / "processed"
 RAW_DIR = REPO_ROOT / "data" / "raw" / "physionet.org" / "files" / "picsdb" / "1.0.0"
 WINDOW_SIZE = 50
 STEP_SIZE = 25
+# SampEn is computed over a long trailing window that ENDS at each HRV window and
+# slides at the HRV cadence (issue #13; "slide per the existing Tier-1 cadence" —
+# docs/research/cardiorespiratory-feature-validation.md). N≈4096 intervals ≈ 20–25 min
+# at neonatal HR (HeRO operational window, Moorman 2011 — [UNVERIFIED], tunable).
+# Until SAMPEN_MIN_N intervals have accrued the entropy window is cold-start → NaN,
+# which the direction-aware floor treats as non-triggering (bounded delay, not omission).
+SAMPEN_WINDOW = 4096
+SAMPEN_MIN_N = 512
 
 logging.info("REPO_ROOT:     %s", REPO_ROOT)
 logging.info("PROCESSED_DIR: %s", PROCESSED_DIR)
@@ -46,7 +54,12 @@ def extract_features(patient_id):
 
     while start + WINDOW_SIZE <= len(rr_ms):
         window = rr_ms[start : start + WINDOW_SIZE]
-        row = get_window_features(window, patient_id, win_idx)
+        # Trailing long window for SampEn, ending at this HRV window's last beat.
+        end = start + WINDOW_SIZE
+        entropy_window = rr_ms[max(0, end - SAMPEN_WINDOW) : end]
+        if len(entropy_window) < SAMPEN_MIN_N:
+            entropy_window = np.array([])  # cold-start → sampen NaN
+        row = get_window_features(window, patient_id, win_idx, rr_entropy=entropy_window)
         rows.append(row)
         start += STEP_SIZE
         win_idx += 1

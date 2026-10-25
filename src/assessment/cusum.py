@@ -240,6 +240,13 @@ class TemporalAssessor:
     the same starting state always yields the same escalation point.
     """
 
+    #: Structural quieting authority (``SoftFloorArbiter``, ADR-0003 / #27). Tier 2 is the *only*
+    #: tier permitted to quiet a SOFT single-feature floor — it is calibrated, auditable, and
+    #: self-correcting (a wrong quiet re-escalates deterministically as the CUSUM accumulates).
+    #: The cascade honours this tier's ``may_quiet`` grant and no other tier's, so an LLM (Tier 3)
+    #: or the Tier 1 floor can never quiet the floor even if it sets ``may_quiet`` on its Assessment.
+    quiets_soft_floor: bool = True
+
     def __init__(
         self,
         store: CusumStateStore | None = None,

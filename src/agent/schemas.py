@@ -76,7 +76,9 @@ class NeonatalAlert(BaseModel):
     patient_id: str
     timestamp: datetime
     concern_level: Literal["RED", "YELLOW", "GREEN"]
-    risk_score: float
+    # Deterministic Tier-1 abnormality-departure risk in [0, 1] (#7 — replaces the retired
+    # ONNX ``risk_score`` probability; ADR-0002). Not a calibrated sepsis probability.
+    risk: float
     primary_indicators: list[str]
     clinical_reasoning: str
     recommended_action: str

@@ -44,12 +44,23 @@ class RagVerdictAssessor:
         return self._graph
 
     def assess(self, context: AssessmentContext) -> Assessment:
-        state = self._get_graph().invoke({"patient_id": context.patient_id})
+        # Thread the context the cascade already loaded into the graph (#24) so Tier 3 reasons
+        # over the *same* window as Tiers 1-2 — no second disk read, no window divergence. The
+        # ``patient_id`` rides along for logging / episodic memory lookups inside the graph.
+        state = self._get_graph().invoke(
+            {"patient_id": context.patient_id, "context": context}
+        )
         alert = state["final_alert"]
+        # Carry the action, indicators, and traceable citations onto the Assessment (#23).
+        # Dropping them here is exactly what forced ``POST /assess`` to bypass the cascade and
+        # run the bare LLM graph to recover them; the seam now preserves what the tier produced.
         return Assessment(
             level=ConcernLevel(alert.concern_level),
-            risk=alert.risk_score,
+            risk=alert.risk,
             confidence=alert.confidence,
             rationale=alert.clinical_reasoning,
             source=self.source,
+            recommended_action=alert.recommended_action,
+            primary_indicators=list(alert.primary_indicators),
+            citations=list(alert.retrieved_context),
         )

@@ -39,7 +39,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from src.assessment.assessor import Assessor
+from src.assessment.assessor import Assessor, SoftFloorArbiter
 from src.assessment.types import Assessment, AssessmentContext, ConcernLevel, Verdict, most_severe
 
 RAG_SOURCE = "rag"
@@ -68,13 +68,33 @@ class VerdictCascade:
         """
         return getattr(tier, "source", None) == self._rag_source
 
+    @staticmethod
+    def _can_quiet_soft_floor(tier: Assessor) -> bool:
+        """Whether ``tier`` *structurally* holds soft-floor-quieting authority (#27).
+
+        The quiet is the one direction (lowering) that must never be granted by an
+        untrusted tier, so authority is a capability of the tier object — a
+        ``SoftFloorArbiter`` (the calibrated, self-correcting Tier 2 CUSUM), declared at
+        class level — not a ``may_quiet`` bool read from any Assessment. This turns the
+        ADR-0003 invariant "only Tier 2 may quiet, never the LLM" from a docstring into a
+        type property: a rogue tier that sets ``may_quiet`` but does not hold the capability
+        is ignored, regardless of tier ordering.
+        """
+        return isinstance(tier, SoftFloorArbiter) and tier.quiets_soft_floor
+
     def assess(self, context: AssessmentContext) -> Verdict:
         # Always-run tiers (Tier 1 + Tier 2). The rag tier is deferred so it can be
         # skipped on a clean window without paying for the LLM.
         base_tiers = [t for t in self._tiers if not self._is_rag(t)]
         rag_tiers = [t for t in self._tiers if self._is_rag(t)]
 
-        assessments: list[Assessment] = [t.assess(context) for t in base_tiers]
+        # Pair each base assessment with its producing tier so a soft-floor quiet can be
+        # honoured *only* from the tier that structurally holds the authority (#27), not from
+        # any tier that happens to set ``may_quiet`` on its Assessment.
+        base_results: list[tuple[Assessor, Assessment]] = [
+            (t, t.assess(context)) for t in base_tiers
+        ]
+        assessments: list[Assessment] = [a for _t, a in base_results]
 
         # --- Two-level Safety Floor (ADR-0003 / #14) ---
         floor_assessments = [a for a in assessments if a.source == self._floor_source]
@@ -85,8 +105,12 @@ class VerdictCascade:
         soft_floor_level = most_severe(
             *[a.level for a in floor_assessments if a.soft_floor]
         )
-        # A calibrated, gated Tier 2 (never the LLM) may quiet the SOFT floor to GREEN.
-        gated_quiet = any(a.may_quiet for a in assessments)
+        # A calibrated, gated Tier 2 (never the LLM) may quiet the SOFT floor to GREEN — and only
+        # a tier that STRUCTURALLY holds quieting authority (a ``SoftFloorArbiter``) is trusted to
+        # grant it. A rogue tier that sets ``may_quiet`` without the capability is ignored (#27).
+        gated_quiet = any(
+            a.may_quiet for tier, a in base_results if self._can_quiet_soft_floor(tier)
+        )
         soft_contribution = (
             ConcernLevel.GREEN if gated_quiet else soft_floor_level
         )
@@ -122,4 +146,11 @@ class VerdictCascade:
             safety_floor=effective_floor,
             assessments=assessments,
             escalated_by=escalated_by,
+            # Surface the headline tier's traceable detail on the Verdict (#23) so a caller
+            # reading only the Verdict recovers the action, indicators, and citations without
+            # bypassing the cascade. The headline is the most severe assessment — the one whose
+            # rationale/risk already drives the Verdict — so its detail is the coherent choice.
+            recommended_action=headline.recommended_action,
+            primary_indicators=list(headline.primary_indicators),
+            citations=list(headline.citations),
         )
