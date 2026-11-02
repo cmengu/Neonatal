@@ -2,13 +2,13 @@
 
 # NeonatalGuard
 
-Neonatal sepsis early-warning prototype that compares each infant's heart-rate variability (HRV) with their own baseline and returns a RED / YELLOW / GREEN verdict that the language-model tier can raise but never lower.
+Prototype that detects a sustained departure of an infant's heart-rate variability (HRV) from their own baseline and returns a RED / YELLOW / GREEN verdict that the language-model tier can raise but never lower; sepsis is only what the guidelines raise as a consideration, and nothing here has been tested against sepsis outcomes.
 
 [![CI](https://github.com/cmengu/Neonatal/actions/workflows/ci.yml/badge.svg)](https://github.com/cmengu/Neonatal/actions/workflows/ci.yml)
 
-<img src="docs/cascade-tests.gif" alt="Terminal recording of pytest running the 24 Verdict Cascade tests, all passing" width="860">
+<img src="docs/showtime-infant7.png" alt="Dashboard showtime view of infant7 at the sustained-drift phase: heart rate and RR interval traces, Tier 1 z-scores, a 3-D JEPA latent embedding leaving the learned-normal cloud, and Tier 3 guideline passages" width="860">
 
-<sub>The 24 Verdict Cascade tests, run with no API keys. They drive the real cascade with stand-in tiers and scripted CUSUM input, so they show that the combining rules hold, not that the system is clinically accurate.</sub>
+<sub>Dashboard showtime view of infant7 (PICS, a public de-identified cohort), mid-demo. Real: the 3-D JEPA embedding, novelty and surprise, which are model outputs on infant7's recorded window. Mocked: the page is a recorded fixture, its heart-rate, RR and Tier 1/Tier 2 series are synthesized, and the Tier 3 reasoning is scripted around real guideline passages. It is not a live run and not a sepsis detection.</sub>
 
 </div>
 
@@ -72,6 +72,7 @@ Each Tier 3 specialist queries only its own categories of the clinical texts in 
 
 ## Known limitations
 
+- Nothing here has been tested against sepsis outcomes: PICS has no sepsis labels, so the system is validated only as a detector of a sustained HRV departure from the infant's own baseline, and sepsis is the consideration the guidelines raise, not something it detects or diagnoses.
 - Tier 3 has not been evaluated live with an LLM in this repo; its unit tests use a fake graph.
 - The CUSUM operating point (k, h) and the quiet gates are engineering constants, not calibrated on real streams (`cusum.py` docstring).
 - The Tier 1 threshold is a per-infant SPC triage threshold, not a validated clinical cutoff (`deviation.py`).
